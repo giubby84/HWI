@@ -61,7 +61,7 @@ class btchip:
 	BTCHIP_INS_EXT_CACHE_GET_FEATURES = 0x26
 
 	OPERATION_MODE_WALLET = 0x01
-	OPERATION_MODE_RELAXED_WALLET = 0x02 
+	OPERATION_MODE_RELAXED_WALLET = 0x02
 	OPERATION_MODE_SERVER = 0x04
 	OPERATION_MODE_DEVELOPER = 0x08
 
@@ -85,13 +85,13 @@ class btchip:
 			else:
 				self.scriptBlockLength = 255
 		except:
-			pass			
+			pass
 
 	def getWalletPublicKey(self, path, showOnScreen=False, segwit=False, segwitNative=False, cashAddr=False):
 		result = {}
 		donglePath = parse_bip32_path(path)
 		if self.needKeyCache:
-			self.resolvePublicKeysInPath(path)			
+			self.resolvePublicKeysInPath(path)
 		apdu = [ self.BTCHIP_CLA, self.BTCHIP_INS_GET_WALLET_PUBLIC_KEY, 0x01 if showOnScreen else 0x00, 0x03 if cashAddr else 0x02 if segwitNative else 0x01 if segwit else 0x00, len(donglePath) ]
 		apdu.extend(donglePath)
 		response = self.dongle.exchange(bytearray(apdu))
@@ -240,7 +240,7 @@ class btchip:
 		alternateEncoding = False
 		donglePath = parse_bip32_path(changePath)
 		if self.needKeyCache:
-			self.resolvePublicKeysInPath(changePath)		
+			self.resolvePublicKeysInPath(changePath)
 		result = {}
 		outputs = None
 		if rawTx is not None:
@@ -287,7 +287,7 @@ class btchip:
 		if result['confirmationType'] == 0x02:
 			result['keycardData'] = response[1 + response[0] + 1:]
 		if result['confirmationType'] == 0x03:
-			offset = 1 + response[0] + 1 
+			offset = 1 + response[0] + 1
 			keycardDataLength = response[offset]
 			offset = offset + 1
 			result['keycardData'] = response[offset : offset + keycardDataLength]
@@ -296,7 +296,7 @@ class btchip:
 		if result['confirmationType'] == 0x04:
 			offset = 1 + response[0] + 1
 			keycardDataLength = response[offset]
-			result['keycardData'] = response[offset + 1 : offset + 1 + keycardDataLength]			
+			result['keycardData'] = response[offset + 1 : offset + 1 + keycardDataLength]
 		if outputs == None:
 			result['outputData'] = response[1 : 1 + response[0]]
 		else:
@@ -308,7 +308,7 @@ class btchip:
 			pin = pin.encode('utf-8')
 		donglePath = parse_bip32_path(path)
 		if self.needKeyCache:
-			self.resolvePublicKeysInPath(path)		
+			self.resolvePublicKeysInPath(path)
 		apdu = [ self.BTCHIP_CLA, self.BTCHIP_INS_HASH_SIGN, 0x00, 0x00 ]
 		params = []
 		params.extend(donglePath)
@@ -325,7 +325,7 @@ class btchip:
 	def signMessagePrepareV2(self, path, message):
 		donglePath = parse_bip32_path(path)
 		if self.needKeyCache:
-			self.resolvePublicKeysInPath(path)				
+			self.resolvePublicKeysInPath(path)
 		result = {}
 		offset = 0
 		encryptedOutputData = b""
@@ -354,8 +354,8 @@ class btchip:
 		result['confirmationType'] = response[1 + response[0]]
 		if result['confirmationType'] == 0x03:
 			offset = 1 + response[0] + 1
-			result['secureScreenData'] = response[offset:]			
-			result['encryptedOutputData'] = encryptedOutputData 
+			result['secureScreenData'] = response[offset:]
+			result['encryptedOutputData'] = encryptedOutputData
 
 		return result
 
@@ -399,3 +399,10 @@ class btchip:
 		result['version'] = "%d.%d.%d" % (response[2], response[3], response[4])
 		result['specialVersion'] = response[1]
 		return result
+
+	def getRandom(self, size):
+		if size > 255:
+			raise BTChipException("Invalid size")
+		apdu = [ self.BTCHIP_CLA, self.BTCHIP_INS_GET_RANDOM, 0x00, 0x00, size ]
+		return self.dongle.exchange(bytearray(apdu))
+
