@@ -4,7 +4,7 @@ from ..hwwclient import HardwareWalletClient
 from ..errors import ActionCanceledError, BadArgumentError, DeviceConnectionError, DeviceFailureError, UnavailableActionError, common_err_msgs, handle_errors
 from .btchip.bitcoinTransaction import bitcoinTransaction
 from .btchip.btchip import btchip
-from .btchip.btchipComm import HIDDongleHIDAPI
+from .btchip.btchipComm import HIDDongleHIDAPI, getDongle
 from .btchip.btchipException import BTChipException
 from .btchip.btchipUtils import compress_public_key
 import base64
@@ -70,14 +70,18 @@ def ledger_exception(f):
 # This class extends the HardwareWalletClient for Ledger Nano S and Nano X specific things
 class LedgerClient(HardwareWalletClient):
 
-    def __init__(self, path, password=''):
+    def __init__(self, path, password='', emulator=False):
         super(LedgerClient, self).__init__(path, password)
-        device = hid.device()
-        device.open_path(path.encode())
-        device.set_nonblocking(True)
+        if emulator:
+            self.dongle = getDongle(True)
+            self.app = btchip(self.dongle)
+        else:
+            device = hid.device()
+            device.open_path(path.encode())
+            device.set_nonblocking(True)
 
-        self.dongle = HIDDongleHIDAPI(device, True, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
-        self.app = btchip(self.dongle)
+            self.dongle = HIDDongleHIDAPI(device, True, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
+            self.app = btchip(self.dongle)
 
     # Must return a dict with the xpub
     # Retrieves the public key at the specified BIP 32 derivation path
