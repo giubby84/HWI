@@ -249,6 +249,12 @@ class LedgerClient(HardwareWalletClient):
 
         # Sign any segwit inputs
         if has_segwit:
+            import pprint
+            print(f"segwit_inputs = {pprint.pformat(segwit_inputs)}")
+            print(f"tx_bytes = {tx_bytes}")
+            print(f"script_code = {script_codes[0]}")
+            print(f"signature_attempt=\n{all_signature_attempts[0][0][0]}")
+            #import pdb;pdb.set_trace()
             # Process them up front with all scriptcodes blank
             blank_script_code = bytearray()
             for i in range(len(segwit_inputs)):
