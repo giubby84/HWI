@@ -39,11 +39,12 @@ class bitcoinInput:
 			offset += 4
 			bufferOffset['offset'] = offset
 
-	def serialize(self):
+	def serialize(self, forAuthorization = False):
 		result = []
 		result.extend(self.prevOut)
-		writeVarint(len(self.script), result)
-		result.extend(self.script)
+		if not forAuthorization:
+			writeVarint(len(self.script), result)
+			result.extend(self.script)
 		result.extend(self.sequence)
 		return result
 
@@ -118,7 +119,10 @@ class bitcoinTransaction:
 			else:
 				self.lockTime = data[offset:offset + 4]
 
-	def serialize(self, skipOutputLocktime=False, skipWitness=False):
+	def serialize(self, skipOutputLocktime=False, skipWitness=False, forAuthorization=False):
+		if forAuthorization:
+			skipOutputLocktime = False
+			skipWitness = True
 		if skipWitness or (not self.witness):
 			useWitness = False
 		else:
@@ -130,14 +134,15 @@ class bitcoinTransaction:
 			result.append(0x01)
 		writeVarint(len(self.inputs), result)
 		for trinput in self.inputs:
-			result.extend(trinput.serialize())
+			result.extend(trinput.serialize(forAuthorization))
 		if not skipOutputLocktime:
 			writeVarint(len(self.outputs), result)
 			for troutput in self.outputs:
 				result.extend(troutput.serialize())
 			if useWitness:
 				result.extend(self.witnessScript)
-			result.extend(self.lockTime)
+				if not forAuthorization:
+					result.extend(self.lockTime)
 		return result
 
 	def serializeOutputs(self):

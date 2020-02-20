@@ -65,7 +65,7 @@ class HIDDongleHIDAPI(Dongle, DongleWait):
 
 	def __init__(self, device, ledger=False, debug=False):
 		self.device = device
-		self.ledger = ledger
+		self.ledger = ledger		
 		self.debug = debug
 		self.waitImpl = self
 		self.opened = True
@@ -74,7 +74,7 @@ class HIDDongleHIDAPI(Dongle, DongleWait):
 		if self.debug:
 			print("=> %s" % hexlify(apdu))
 		if self.ledger:
-			apdu = wrapCommandAPDU(0x0101, apdu, 64)
+			apdu = wrapCommandAPDU(0x0101, apdu, 64)		
 		padSize = len(apdu) % 64
 		tmp = apdu
 		if padSize != 0:
@@ -86,7 +86,7 @@ class HIDDongleHIDAPI(Dongle, DongleWait):
 			self.device.write(data)
 			offset += 64
 		dataLength = 0
-		dataStart = 2
+		dataStart = 2		
 		result = self.waitImpl.waitFirstResponse(timeout)
 		if not self.ledger:
 			if result[0] == 0x61: # 61xx : data available
@@ -187,7 +187,7 @@ class DongleServer(Dongle):
 
 	def exchange(self, apdu, timeout=20000):
 		if self.debug:
-			print("=> %s" % hexlify(apdu))
+			print("=> %s" % hexlify(apdu))		
 		self.socket.send(struct.pack(">I", len(apdu)))
 		self.socket.send(apdu)
 		size = struct.unpack(">I", self.socket.recv(4))[0]
@@ -208,13 +208,13 @@ class DongleServer(Dongle):
 def getDongle(debug=False):
 	dev = None
 	hidDevicePath = None
-	ledger = False
+	ledger = False	
 	if HID:
 		for hidDevice in hid.enumerate(0, 0):
 			if hidDevice['vendor_id'] == 0x2581 and hidDevice['product_id'] == 0x2b7c:
 				hidDevicePath = hidDevice['path']
 			if hidDevice['vendor_id'] == 0x2581 and hidDevice['product_id'] == 0x3b7c:
-				hidDevicePath = hidDevice['path']
+				hidDevicePath = hidDevice['path']			
 				ledger = True
 			if hidDevice['vendor_id'] == 0x2581 and hidDevice['product_id'] == 0x4b7c:
 				hidDevicePath = hidDevice['path']
@@ -236,8 +236,8 @@ def getDongle(debug=False):
 		for reader in readers():
 			try:
 				connection = reader.createConnection()
-				connection.connect()
-				response, sw1, sw2 = connection.transmit(toBytes("00A4040010FF4C4547522E57414C5430312E493031"))
+				connection.connect()				
+				response, sw1, sw2 = connection.transmit(toBytes("00A4040010FF4C4547522E57414C5430312E493031"))																  
 				sw = (sw1 << 8) | sw2
 				if sw == 0x9000:
 					break

@@ -1,3 +1,11 @@
+
+# btchip for CheckSIg
+
+2020-02-20 Eric
+
+Ignore the text below.  I have replaced HWI's copy of btchip
+with the version that ledger customized for use by CheckSig.
+
 # Ledger Nano S and Nano X Library
 
 This is a stripped down and modified version of the official [btchip-python](https://github.com/LedgerHQ/btchip-python) library.
