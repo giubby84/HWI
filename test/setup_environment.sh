@@ -36,8 +36,8 @@ fi
 cd legacy
 export EMULATOR=1 TREZOR_TRANSPORT_V1=1 DEBUG_LINK=1 HEADLESS=1
 if [ "$trezor_setup_needed" == true ] ; then
-    script/setup
-    pipenv install
+    pipenv sync
+    pipenv run script/setup
 fi
 pipenv run script/cibuild
 # Delete any emulator.img file
@@ -54,6 +54,8 @@ make build_unix
 # Delete any emulator.img file
 rm /var/tmp/trezor.flash
 cd ../..
+# Remove nanopb to avoid interfering with keepkey
+pip uninstall -y nanopb
 
 # Clone coldcard firmware if it doesn't exist, or update it if it does
 coldcard_setup_needed=false
@@ -63,7 +65,7 @@ if [ ! -d "firmware" ]; then
     coldcard_setup_needed=true
 else
     cd firmware
-    git reset --hard HEAD^ # Undo git-am for checking and updating
+    git reset --hard HEAD~2 # Undo git-am for checking and updating
     git fetch
 
     # Determine if we need to pull. From https://stackoverflow.com/a/3278427
@@ -81,6 +83,7 @@ else
 fi
 # Apply patch to make simulator work in linux environments
 git am ../../data/coldcard-linux-sock.patch
+git am ../../data/coldcard-multisig-setup.patch
 
 # Build the simulator. This is cached, but it is also fast
 cd unix
@@ -146,20 +149,48 @@ fi
 
 # Build the simulator. This is cached, but it is also fast
 if [ "$keepkey_setup_needed" == true ] ; then
-    git clone https://github.com/nanopb/nanopb.git -b nanopb-0.2.9.2
+    git clone https://github.com/nanopb/nanopb.git -b nanopb-0.3.9.4
 fi
-# This needs py2, so make a pipenv
-export PIPENV_IGNORE_VIRTUALENVS=1
-pipenv --python 2.7
-pipenv install protobuf
 cd nanopb/generator/proto
-pipenv run make
+make
 cd ../../../
 export PATH=$PATH:`pwd`/nanopb/generator
-pipenv run cmake -C cmake/caches/emulator.cmake . -DNANOPB_DIR=nanopb/ -DKK_HAVE_STRLCAT=OFF -DKK_HAVE_STRLCPY=OFF
-pipenv run make -j$(nproc) kkemu
+cmake -C cmake/caches/emulator.cmake . -DNANOPB_DIR=nanopb/ -DPROTOC_BINARY=/usr/bin/protoc
+make -j$(nproc) kkemu
 # Delete any emulator.img file
 find . -name "emulator.img" -exec rm {} \;
+cd ..
+
+# Clone ledger simulator Speculos if it doesn't exist, or update it if it does
+speculos_setup_needed=false
+if [ ! -d "speculos" ]; then
+    git clone --recursive https://github.com/LedgerHQ/speculos.git
+    cd speculos
+    speculos_setup_needed=true
+else
+    cd speculos
+    git fetch
+
+    # Determine if we need to pull. From https://stackoverflow.com/a/3278427
+    UPSTREAM=${1:-'@{u}'}
+    LOCAL=$(git rev-parse @)
+    REMOTE=$(git rev-parse "$UPSTREAM")
+    BASE=$(git merge-base @ "$UPSTREAM")
+
+    if [ $LOCAL = $REMOTE ]; then
+        echo "Up-to-date"
+    elif [ $LOCAL = $BASE ]; then
+        git pull
+        speculos_setup_needed=true
+    fi
+fi
+# Apply patch to get screen info
+git am ../../data/speculos-auto-button.patch
+
+# Build the simulator. This is cached, but it is also fast
+mkdir -p build
+cmake -Bbuild -H.
+make -C build/ emu launcher
 cd ..
 
 # Clone bitcoind if it doesn't exist, or update it if it does

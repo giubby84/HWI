@@ -1,7 +1,7 @@
 #! /usr/bin/env python3
 
 from .commands import backup_device, displayaddress, enumerate, find_device, \
-    get_client, getmasterxpub, getxpub, getkeypool, getdescriptors, prompt_pin, restore_device, send_pin, setup_device, \
+    get_client, getmasterxpub, getxpub, getkeypool, getdescriptors, prompt_pin, toggle_passphrase, restore_device, send_pin, setup_device, \
     signmessage, signtx, wipe_device, install_udev_rules
 from .errors import (
     handle_errors,
@@ -35,14 +35,14 @@ def getxpub_handler(args, client):
     return getxpub(client, path=args.path)
 
 def getkeypool_handler(args, client):
-    return getkeypool(client, path=args.path, start=args.start, end=args.end, internal=args.internal, keypool=args.keypool, account=args.account, sh_wpkh=args.sh_wpkh, wpkh=args.wpkh)
+    return getkeypool(client, path=args.path, start=args.start, end=args.end, internal=args.internal, keypool=args.keypool, account=args.account, sh_wpkh=args.sh_wpkh, wpkh=args.wpkh, addr_all=args.all)
 
 def getdescriptors_handler(args, client):
     return getdescriptors(client, account=args.account)
 
 def restore_device_handler(args, client):
     if args.interactive:
-        return restore_device(client, label=args.label)
+        return restore_device(client, label=args.label, word_count=args.word_count)
     return {'error': 'restore requires interactive mode', 'code': UNAVAILABLE_ACTION}
 
 def setup_device_handler(args, client):
@@ -61,6 +61,9 @@ def wipe_device_handler(args, client):
 
 def prompt_pin_handler(args, client):
     return prompt_pin(client)
+
+def toggle_passphrase_handler(args, client):
+    return toggle_passphrase(client)
 
 def send_pin_handler(args, client):
     return send_pin(client, pin=args.pin)
@@ -107,6 +110,7 @@ def process_commands(cli_args):
     parser.add_argument('--version', action='version', version='%(prog)s {}'.format(__version__))
     parser.add_argument('--stdin', help='Enter commands and arguments via stdin', action='store_true')
     parser.add_argument('--interactive', '-i', help='Use some commands interactively. Currently required for all device configuration commands', action='store_true')
+    parser.add_argument('--expert', help='Do advanced things and get more detailed information returned from some commands. Use at your own risk.', action='store_true')
 
     subparsers = parser.add_subparsers(description='Commands', dest='command')
     # work-around to make subparser required
@@ -136,8 +140,10 @@ def process_commands(cli_args):
     kparg_group.add_argument('--keypool', action='store_true', dest='keypool', help='Indicates that the keys are to be imported to the keypool', default=True)
     kparg_group.add_argument('--nokeypool', action='store_false', dest='keypool', help='Indicates that the keys are not to be imported to the keypool', default=False)
     getkeypool_parser.add_argument('--internal', action='store_true', help='Indicates that the keys are change keys')
-    getkeypool_parser.add_argument('--sh_wpkh', action='store_true', help='Generate p2sh-nested segwit addresses (default path: m/49h/0h/0h/[0,1]/*)')
-    getkeypool_parser.add_argument('--wpkh', action='store_true', help='Generate bech32 addresses (default path: m/84h/0h/0h/[0,1]/*)')
+    kp_type_group = getkeypool_parser.add_mutually_exclusive_group()
+    kp_type_group.add_argument('--sh_wpkh', action='store_true', help='Generate p2sh-nested segwit addresses (default path: m/49h/0h/0h/[0,1]/*)')
+    kp_type_group.add_argument('--wpkh', action='store_true', help='Generate bech32 addresses (default path: m/84h/0h/0h/[0,1]/*)')
+    kp_type_group.add_argument('--all', action='store_true', help='Generate addresses for all standard address types (default paths: m/{44,49,84}h/0h/0h/[0,1]/*)')
     getkeypool_parser.add_argument('--account', help='BIP43 account', type=int, default=0)
     getkeypool_parser.add_argument('--path', help='Derivation path, default follows BIP43 convention, e.g. m/84h/0h/0h/1/* with --wpkh --internal. If this argument and --internal is not given, both internal and external keypools will be returned.')
     getkeypool_parser.add_argument('start', type=int, help='The index to start at.')
@@ -165,6 +171,7 @@ def process_commands(cli_args):
     wipedev_parser.set_defaults(func=wipe_device_handler)
 
     restore_parser = subparsers.add_parser('restore', help='Initiate the device restoring process. Requires interactive mode')
+    restore_parser.add_argument('--word_count', '-w', help='Word count of your BIP39 recovery phrase (options: 12/18/24)', type=int, default=24)
     restore_parser.add_argument('--label', '-l', help='The name to give to the device', default='')
     restore_parser.set_defaults(func=restore_device_handler)
 
@@ -175,6 +182,9 @@ def process_commands(cli_args):
 
     promptpin_parser = subparsers.add_parser('promptpin', help='Have the device prompt for your PIN')
     promptpin_parser.set_defaults(func=prompt_pin_handler)
+
+    togglepassphrase_parser = subparsers.add_parser('togglepassphrase', help='Toggle BIP39 passphrase protection')
+    togglepassphrase_parser.set_defaults(func=toggle_passphrase_handler)
 
     sendpin_parser = subparsers.add_parser('sendpin', help='Send the numeric positions for your PIN to the device')
     sendpin_parser.add_argument('pin', help='The numeric positions of the PIN')
@@ -228,12 +238,12 @@ def process_commands(cli_args):
 
     # Auto detect if we are using fingerprint or type to identify device
     if args.fingerprint or (args.device_type and not args.device_path):
-        client = find_device(args.device_path, args.password, args.device_type, args.fingerprint)
+        client = find_device(args.password, args.device_type, args.fingerprint, args.expert)
         if not client:
             return {'error': 'Could not find device with specified fingerprint', 'code': DEVICE_CONN_ERROR}
     elif args.device_type and args.device_path:
         with handle_errors(result=result, code=DEVICE_CONN_ERROR):
-            client = get_client(device_type, device_path, password)
+            client = get_client(device_type, device_path, password, args.expert)
         if 'error' in result:
             return result
     else:

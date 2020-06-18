@@ -1,10 +1,10 @@
 #! /bin/bash
 # Generates the setup.py file
 
-set -e
+set -ex
 
 # Setup poetry and install the dependencies
-poetry install
+poetry install -E qt
 
 # Build the source distribution
 poetry build -f sdist
@@ -30,3 +30,4 @@ tar -xf $tarball $toextract
 mv $toextract .
 dir=`echo $toextract | cut -f1 -d"/"`
 rm -r $dir
+sed -i 's/distutils.core/setuptools/g' setup.py

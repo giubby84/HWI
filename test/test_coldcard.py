@@ -5,6 +5,7 @@ import atexit
 import os
 import signal
 import subprocess
+import sys
 import time
 import unittest
 
@@ -12,8 +13,13 @@ from hwilib.cli import process_commands
 from test_device import DeviceTestCase, start_bitcoind, TestDeviceConnect, TestDisplayAddress, TestGetKeypool, TestGetDescriptors, TestSignMessage, TestSignTx
 
 def coldcard_test_suite(simulator, rpc, userpass, interface):
+    try:
+        os.unlink('coldcard-emulator.stdout')
+    except FileNotFoundError:
+        pass
+    coldcard_log = open('coldcard-emulator.stdout', 'a')
     # Start the Coldcard simulator
-    coldcard_proc = subprocess.Popen(['python3', os.path.basename(simulator)], cwd=os.path.dirname(simulator), stdout=subprocess.DEVNULL, preexec_fn=os.setsid)
+    coldcard_proc = subprocess.Popen(['python3', os.path.basename(simulator), '--ms'], cwd=os.path.dirname(simulator), stdout=coldcard_log, preexec_fn=os.setsid)
     # Wait for simulator to be up
     while True:
         try:
@@ -31,8 +37,10 @@ def coldcard_test_suite(simulator, rpc, userpass, interface):
     # Cleanup
 
     def cleanup_simulator():
-        os.killpg(os.getpgid(coldcard_proc.pid), signal.SIGTERM)
-        os.waitpid(os.getpgid(coldcard_proc.pid), 0)
+        if coldcard_proc.poll() is None:
+            os.killpg(os.getpgid(coldcard_proc.pid), signal.SIGTERM)
+            os.waitpid(os.getpgid(coldcard_proc.pid), 0)
+        coldcard_log.close()
     atexit.register(cleanup_simulator)
 
     # Coldcard specific management command tests
@@ -62,6 +70,8 @@ def coldcard_test_suite(simulator, rpc, userpass, interface):
             result = self.do_command(self.dev_args + ['backup'])
             self.assertTrue(result['success'])
             self.assertIn('The backup has been written to', result['message'])
+            backup_filename = result['message'].split(' ')[-1]
+            os.remove(backup_filename)
 
         def test_pin(self):
             result = self.do_command(self.dev_args + ['promptpin'])
@@ -76,9 +86,22 @@ def coldcard_test_suite(simulator, rpc, userpass, interface):
             self.assertEqual(result['error'], 'The Coldcard does not need a PIN sent from the host')
             self.assertEqual(result['code'], -9)
 
+    class TestColdcardGetXpub(DeviceTestCase):
+        def test_getxpub(self):
+            result = self.do_command(self.dev_args + ['--expert', 'getxpub', 'm/44h/0h/0h/3'])
+            self.assertEqual(result['xpub'], 'tpubDFHiBJDeNvqPWNJbzzxqDVXmJZoNn2GEtoVcFhMjXipQiorGUmps3e5ieDGbRrBPTFTh9TXEKJCwbAGW9uZnfrVPbMxxbFohuFzfT6VThty')
+            self.assertTrue(result['testnet'])
+            self.assertFalse(result['private'])
+            self.assertEqual(result['depth'], 4)
+            self.assertEqual(result['parent_fingerprint'], 'bc123c3e')
+            self.assertEqual(result['child_num'], 3)
+            self.assertEqual(result['chaincode'], '806b26507824f73bc331494afe122f428ef30dde80b2c1ce025d2d03aff411e7')
+            self.assertEqual(result['pubkey'], '0368000bdff5e0b71421c37b8514de8acd4d98ba9908d183d9da56d02ca4fcfd08')
+
     # Generic device tests
     suite = unittest.TestSuite()
     suite.addTest(DeviceTestCase.parameterize(TestColdcardManCommands, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', '', interface=interface))
+    suite.addTest(DeviceTestCase.parameterize(TestColdcardGetXpub, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
     suite.addTest(DeviceTestCase.parameterize(TestDeviceConnect, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
     suite.addTest(DeviceTestCase.parameterize(TestDeviceConnect, rpc, userpass, 'coldcard_simulator', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
     suite.addTest(DeviceTestCase.parameterize(TestGetDescriptors, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
@@ -86,7 +109,11 @@ def coldcard_test_suite(simulator, rpc, userpass, interface):
     suite.addTest(DeviceTestCase.parameterize(TestDisplayAddress, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
     suite.addTest(DeviceTestCase.parameterize(TestSignMessage, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
     suite.addTest(DeviceTestCase.parameterize(TestSignTx, rpc, userpass, 'coldcard', 'coldcard', '/tmp/ckcc-simulator.sock', '0f056943', 'tpubDDpWvmUrPZrhSPmUzCMBHffvC3HyMAPnWDSAQNBTnj1iZeJa7BZQEttFiP4DS4GCcXQHezdXhn86Hj6LHX5EDstXPWrMaSneRWM8yUf6NFd', interface=interface))
-    return suite
+
+    result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
+    cleanup_simulator()
+    atexit.unregister(cleanup_simulator)
+    return result.wasSuccessful()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test Coldcard implementation')
@@ -98,5 +125,4 @@ if __name__ == '__main__':
     # Start bitcoind
     rpc, userpass = start_bitcoind(args.bitcoind)
 
-    suite = coldcard_test_suite(args.simulator, rpc, userpass, args.interface)
-    unittest.TextTestRunner(verbosity=2).run(suite)
+    sys.exit(not coldcard_test_suite(args.simulator, rpc, userpass, args.interface))

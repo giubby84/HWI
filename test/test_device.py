@@ -113,19 +113,25 @@ class DeviceTestCase(unittest.TestCase):
     def __repr__(self):
         return '{}: {}'.format(self.full_type, super().__repr__())
 
-class TestDeviceConnect(DeviceTestCase):
     def setUp(self):
         self.emulator.start()
 
     def tearDown(self):
         self.emulator.stop()
 
+class TestDeviceConnect(DeviceTestCase):
     def test_enumerate(self):
         enum_res = self.do_command(self.get_password_args() + ['enumerate'])
         found = False
         for device in enum_res:
             if (device['type'] == self.type or device['model'] == self.type) and device['path'] == self.path and device['fingerprint'] == self.fingerprint:
+                self.assertIn('type', device)
+                self.assertIn('model', device)
+                self.assertIn('path', device)
+                self.assertIn('needs_pin_sent', device)
+                self.assertIn('needs_passphrase_sent', device)
                 self.assertNotIn('error', device)
+                self.assertNotIn('code', device)
                 found = True
         self.assertTrue(found)
 
@@ -169,25 +175,16 @@ class TestGetKeypool(DeviceTestCase):
             self.dev_args.append('--testnet')
         self.emulator.start()
 
-    def tearDown(self):
-        self.emulator.stop()
-
-    def test_getkeypool_bad_args(self):
-        result = self.do_command(self.dev_args + ['getkeypool', '--sh_wpkh', '--wpkh', '0', '20'])
-        self.assertIn('error', result)
-        self.assertIn('code', result)
-        self.assertEqual(result['code'], -7)
-
     def test_getkeypool(self):
         non_keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--nokeypool', '0', '20'])
         import_result = self.wpk_rpc.importmulti(non_keypool_desc)
         self.assertTrue(import_result[0]['success'])
 
-        keypool_desc = self.do_command(self.dev_args + ['getkeypool', '0', '20'])
-        import_result = self.wpk_rpc.importmulti(keypool_desc)
+        pkh_keypool_desc = self.do_command(self.dev_args + ['getkeypool', '0', '20'])
+        import_result = self.wpk_rpc.importmulti(pkh_keypool_desc)
         self.assertFalse(import_result[0]['success'])
 
-        import_result = self.wrpc.importmulti(keypool_desc)
+        import_result = self.wrpc.importmulti(pkh_keypool_desc)
         self.assertTrue(import_result[0]['success'])
         for i in range(0, 21):
             addr_info = self.wrpc.getaddressinfo(self.wrpc.getnewaddress())
@@ -195,17 +192,17 @@ class TestGetKeypool(DeviceTestCase):
             addr_info = self.wrpc.getaddressinfo(self.wrpc.getrawchangeaddress())
             self.assertEqual(addr_info['hdkeypath'], "m/44'/1'/0'/1/{}".format(i))
 
-        keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--sh_wpkh', '0', '20'])
-        import_result = self.wrpc.importmulti(keypool_desc)
+        shwpkh_keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--sh_wpkh', '0', '20'])
+        import_result = self.wrpc.importmulti(shwpkh_keypool_desc)
         self.assertTrue(import_result[0]['success'])
         for i in range(0, 21):
-            addr_info = self.wrpc.getaddressinfo(self.wrpc.getnewaddress())
+            addr_info = self.wrpc.getaddressinfo(self.wrpc.getnewaddress('', 'p2sh-segwit'))
             self.assertEqual(addr_info['hdkeypath'], "m/49'/1'/0'/0/{}".format(i))
-            addr_info = self.wrpc.getaddressinfo(self.wrpc.getrawchangeaddress())
+            addr_info = self.wrpc.getaddressinfo(self.wrpc.getrawchangeaddress('p2sh-segwit'))
             self.assertEqual(addr_info['hdkeypath'], "m/49'/1'/0'/1/{}".format(i))
 
-        keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--wpkh', '0', '20'])
-        import_result = self.wrpc.importmulti(keypool_desc)
+        wpkh_keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--wpkh', '0', '20'])
+        import_result = self.wrpc.importmulti(wpkh_keypool_desc)
         self.assertTrue(import_result[0]['success'])
         for i in range(0, 21):
             addr_info = self.wrpc.getaddressinfo(self.wrpc.getnewaddress())
@@ -213,13 +210,17 @@ class TestGetKeypool(DeviceTestCase):
             addr_info = self.wrpc.getaddressinfo(self.wrpc.getrawchangeaddress())
             self.assertEqual(addr_info['hdkeypath'], "m/84'/1'/0'/1/{}".format(i))
 
+        # Test that `--all` option gives the "concatenation" of previous three calls
+        all_keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--all', '0', '20'])
+        self.assertEqual(all_keypool_desc, pkh_keypool_desc + wpkh_keypool_desc + shwpkh_keypool_desc)
+
         keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--sh_wpkh', '--account', '3', '0', '20'])
         import_result = self.wrpc.importmulti(keypool_desc)
         self.assertTrue(import_result[0]['success'])
         for i in range(0, 21):
-            addr_info = self.wrpc.getaddressinfo(self.wrpc.getnewaddress())
+            addr_info = self.wrpc.getaddressinfo(self.wrpc.getnewaddress('', 'p2sh-segwit'))
             self.assertEqual(addr_info['hdkeypath'], "m/49'/1'/3'/0/{}".format(i))
-            addr_info = self.wrpc.getaddressinfo(self.wrpc.getrawchangeaddress())
+            addr_info = self.wrpc.getaddressinfo(self.wrpc.getrawchangeaddress('p2sh-segwit'))
             self.assertEqual(addr_info['hdkeypath'], "m/49'/1'/3'/1/{}".format(i))
         keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--wpkh', '--account', '3', '0', '20'])
         import_result = self.wrpc.importmulti(keypool_desc)
@@ -283,9 +284,6 @@ class TestSignTx(DeviceTestCase):
             self.dev_args.append('--testnet')
         self.emulator.start()
 
-    def tearDown(self):
-        self.emulator.stop()
-
     def _generate_and_finalize(self, unknown_inputs, psbt):
         if not unknown_inputs:
             # Just do the normal signing process to test "all inputs" case
@@ -335,7 +333,7 @@ class TestSignTx(DeviceTestCase):
             self.assertTrue(self.wrpc.testmempoolaccept([finalize_res['hex']])[0]["allowed"])
         return finalize_res['hex']
 
-    def _test_signtx(self, input_type, multisig):
+    def _test_signtx(self, input_type, multisig, external):
         # Import some keys to the watch only wallet and send coins to them
         keypool_desc = self.do_command(self.dev_args + ['getkeypool', '--sh_wpkh', '30', '40'])
         import_result = self.wrpc.importmulti(keypool_desc)
@@ -361,9 +359,9 @@ class TestSignTx(DeviceTestCase):
                    pkh_info['desc'][4:-10]]
 
         # Get the descriptors with their checksums
-        sh_multi_desc = self.wrpc.getdescriptorinfo('sh(multi(2,' + pubkeys[0] + ',' + pubkeys[1] + ',' + pubkeys[2] + '))')['descriptor']
-        sh_wsh_multi_desc = self.wrpc.getdescriptorinfo('sh(wsh(multi(2,' + pubkeys[0] + ',' + pubkeys[1] + ',' + pubkeys[2] + ')))')['descriptor']
-        wsh_multi_desc = self.wrpc.getdescriptorinfo('wsh(multi(2,' + pubkeys[2] + ',' + pubkeys[1] + ',' + pubkeys[0] + '))')['descriptor']
+        sh_multi_desc = self.wrpc.getdescriptorinfo('sh(sortedmulti(2,' + pubkeys[0] + ',' + pubkeys[1] + ',' + pubkeys[2] + '))')['descriptor']
+        sh_wsh_multi_desc = self.wrpc.getdescriptorinfo('sh(wsh(sortedmulti(2,' + pubkeys[0] + ',' + pubkeys[1] + ',' + pubkeys[2] + ')))')['descriptor']
+        wsh_multi_desc = self.wrpc.getdescriptorinfo('wsh(sortedmulti(2,' + pubkeys[2] + ',' + pubkeys[1] + ',' + pubkeys[0] + '))')['descriptor']
 
         sh_multi_import = {'desc': sh_multi_desc, "timestamp": "now", "label": "shmulti"}
         sh_wsh_multi_import = {'desc': sh_wsh_multi_desc, "timestamp": "now", "label": "shwshmulti"}
@@ -408,8 +406,9 @@ class TestSignTx(DeviceTestCase):
                 self.assertTrue((i + 1) * in_amt == self.wrpc.getbalance("*", 0, True))
             psbt = self.wrpc.walletcreatefundedpsbt([], [{self.wpk_rpc.getnewaddress('', 'legacy'): (i + 1) * out_amt}, {self.wpk_rpc.getnewaddress('', 'p2sh-segwit'): (i + 1) * out_amt}, {self.wpk_rpc.getnewaddress('', 'bech32'): (i + 1) * out_amt}], 0, {'includeWatching': True, 'subtractFeeFromOutputs': [0, 1, 2]}, True)
 
-            # Sign with unknown inputs in two steps
-            self._generate_and_finalize(True, psbt)
+            if external:
+                # Sign with unknown inputs in two steps
+                self._generate_and_finalize(True, psbt)
             # Sign all inputs all at once
             final_tx = self._generate_and_finalize(False, psbt)
 
@@ -419,12 +418,13 @@ class TestSignTx(DeviceTestCase):
     # Test wrapper to avoid mixed-inputs signing for Ledger
     def test_signtx(self):
         supports_mixed = {'coldcard', 'trezor_1', 'digitalbitbox', 'keepkey'}
-        supports_multisig = {'ledger', 'trezor_1', 'digitalbitbox', 'keepkey'}
+        supports_multisig = {'ledger', 'trezor_1', 'digitalbitbox', 'keepkey', 'coldcard', 'trezor_t'}
+        supports_external = {'ledger', 'trezor_1', 'digitalbitbox', 'keepkey', 'coldcard'}
         if self.full_type not in supports_mixed:
-            self._test_signtx("legacy", self.full_type in supports_multisig)
-            self._test_signtx("segwit", self.full_type in supports_multisig)
+            self._test_signtx("legacy", self.full_type in supports_multisig, self.full_type in supports_external)
+            self._test_signtx("segwit", self.full_type in supports_multisig, self.full_type in supports_external)
         else:
-            self._test_signtx("all", self.full_type in supports_multisig)
+            self._test_signtx("all", self.full_type in supports_multisig, self.full_type in supports_external)
 
     # Make a huge transaction which might cause some problems with different interfaces
     def test_big_tx(self):
@@ -456,12 +456,6 @@ class TestSignTx(DeviceTestCase):
                 pass
 
 class TestDisplayAddress(DeviceTestCase):
-    def setUp(self):
-        self.emulator.start()
-
-    def tearDown(self):
-        self.emulator.stop()
-
     def test_display_address_bad_args(self):
         result = self.do_command(self.dev_args + ['displayaddress', '--sh_wpkh', '--wpkh', '--path', 'm/49h/1h/0h/0/0'])
         self.assertIn('error', result)
@@ -536,12 +530,6 @@ class TestDisplayAddress(DeviceTestCase):
         self.assertEqual(result['code'], -7)
 
 class TestSignMessage(DeviceTestCase):
-    def setUp(self):
-        self.emulator.start()
-
-    def tearDown(self):
-        self.emulator.stop()
-
     def test_sign_msg(self):
         self.do_command(self.dev_args + ['signmessage', '"Message signing test"', 'm/44h/1h/0h/0/0'])
 

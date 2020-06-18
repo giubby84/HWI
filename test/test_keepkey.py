@@ -1,6 +1,7 @@
 #! /usr/bin/env python3
 
 import argparse
+import atexit
 import json
 import os
 import shlex
@@ -31,10 +32,16 @@ class KeepkeyEmulator(DeviceEmulator):
     def __init__(self, path):
         self.emulator_path = path
         self.emulator_proc = None
+        self.keepkey_log = None
+        try:
+            os.unlink('keepkey-emulator.stdout')
+        except FileNotFoundError:
+            pass
 
     def start(self):
+        self.keepkey_log = open('keepkey-emulator.stdout', 'a')
         # Start the Keepkey emulator
-        self.emulator_proc = subprocess.Popen(['./' + os.path.basename(self.emulator_path)], cwd=os.path.dirname(self.emulator_path), stdout=subprocess.DEVNULL)
+        self.emulator_proc = subprocess.Popen(['./' + os.path.basename(self.emulator_path)], cwd=os.path.dirname(self.emulator_path), stdout=self.keepkey_log)
         # Wait for emulator to be up
         # From https://github.com/trezor/trezor-mcu/blob/master/script/wait_for_emulator.py
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -59,6 +66,7 @@ class KeepkeyEmulator(DeviceEmulator):
         client.init_device()
         device.wipe(client)
         load_device_by_mnemonic(client=client, mnemonic='alcohol woman abuse must during monitor noble actual mixed trade anger aisle', pin='', passphrase_protection=False, label='test') # From Trezor device tests
+        atexit.register(self.stop)
         return client
 
     def stop(self):
@@ -69,6 +77,11 @@ class KeepkeyEmulator(DeviceEmulator):
         emulator_img = os.path.dirname(self.emulator_path) + "/emulator.img"
         if os.path.isfile(emulator_img):
             os.unlink(emulator_img)
+
+        if self.keepkey_log is not None:
+            self.keepkey_log.close()
+
+        atexit.unregister(self.stop)
 
 class KeepkeyTestCase(unittest.TestCase):
     def __init__(self, emulator, interface='library', methodName='runTest'):
@@ -111,14 +124,14 @@ class KeepkeyTestCase(unittest.TestCase):
     def __repr__(self):
         return 'keepkey: {}'.format(super().__repr__())
 
-# Keepkey specific getxpub test because this requires device specific thing to set xprvs
-class TestKeepkeyGetxpub(KeepkeyTestCase):
     def setUp(self):
         self.client = self.emulator.start()
 
     def tearDown(self):
         self.emulator.stop()
 
+# Keepkey specific getxpub test because this requires device specific thing to set xprvs
+class TestKeepkeyGetxpub(KeepkeyTestCase):
     def test_getxpub(self):
         with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), 'data/bip32_vectors.json'), encoding='utf-8') as f:
             vectors = json.load(f)
@@ -137,14 +150,22 @@ class TestKeepkeyGetxpub(KeepkeyTestCase):
                     gxp_res = self.do_command(['-t', 'keepkey', '-d', 'udp:127.0.0.1:21324', 'getxpub', path_vec['path']])
                     self.assertEqual(gxp_res['xpub'], path_vec['xpub'])
 
+    def test_expert_getxpub(self):
+        result = self.do_command(['-t', 'keepkey', '-d', 'udp:127.0.0.1:21324', '--expert', 'getxpub', 'm/44h/0h/0h/3'])
+        self.assertEqual(result['xpub'], 'xpub6FMafWAi3n3ET2rU5yQr16UhRD1Zx4dELmcEw3NaYeBaNnipcr2zjzYp1sNdwR3aTN37hxAqRWQ13AWUZr6L9jc617mU6EvgYXyBjXrEhgr')
+        self.assertFalse(result['testnet'])
+        self.assertFalse(result['private'])
+        self.assertEqual(result['depth'], 4)
+        self.assertEqual(result['parent_fingerprint'], 'f7e318db')
+        self.assertEqual(result['child_num'], 3)
+        self.assertEqual(result['chaincode'], '95a7fb33c4f0896f66045cd7f45ed49a9e72372d2aed204ad0149c39b7b17905')
+        self.assertEqual(result['pubkey'], '022e6d9c18e5a837e802fb09abe00f787c8ccb0fc489c6ec5dc2613d930efd7eae')
+
 # Keepkey specific management (setup, wipe, restore, backup, promptpin, sendpin) command tests
 class TestKeepkeyManCommands(KeepkeyTestCase):
     def setUp(self):
         self.client = self.emulator.start()
         self.dev_args = ['-t', 'keepkey', '-d', 'udp:127.0.0.1:21324']
-
-    def tearDown(self):
-        self.emulator.stop()
 
     def test_setup_wipe(self):
         # Device is init, setup should fail
@@ -237,24 +258,8 @@ class TestKeepkeyManCommands(KeepkeyTestCase):
         self.assertEqual(result['code'], -11)
 
     def test_passphrase(self):
-        # There's no passphrase
-        result = self.do_command(self.dev_args + ['enumerate'])
-        for dev in result:
-            if dev['type'] == 'keepkey' and dev['path'] == 'udp:127.0.0.1:21324':
-                self.assertFalse(dev['needs_passphrase_sent'])
-                self.assertEquals(dev['fingerprint'], '95d8f670')
-        # Setting a passphrase won't change the fingerprint
-        result = self.do_command(self.dev_args + ['-p', 'pass', 'enumerate'])
-        for dev in result:
-            if dev['type'] == 'keepkey' and dev['path'] == 'udp:127.0.0.1:21324':
-                self.assertFalse(dev['needs_passphrase_sent'])
-                self.assertEquals(dev['fingerprint'], '95d8f670')
-
-        # Set a passphrase
-        device.wipe(self.client)
-        self.client.set_passphrase('pass')
-        load_device_by_mnemonic(client=self.client, mnemonic='alcohol woman abuse must during monitor noble actual mixed trade anger aisle', pin='', passphrase_protection=True, label='test')
-        self.client.call(messages.ClearSession())
+        # Enable passphrase
+        self.do_command(self.dev_args + ['togglepassphrase'])
 
         # A passphrase will need to be sent
         result = self.do_command(self.dev_args + ['enumerate'])
@@ -281,6 +286,22 @@ class TestKeepkeyManCommands(KeepkeyTestCase):
                 self.assertFalse(dev['needs_passphrase_sent'])
                 self.assertNotEqual(dev['fingerprint'], fpr)
 
+        # Disable passphrase
+        self.do_command(self.dev_args + ['togglepassphrase'])
+
+        # There's no passphrase
+        result = self.do_command(self.dev_args + ['enumerate'])
+        for dev in result:
+            if dev['type'] == 'keepkey' and dev['path'] == 'udp:127.0.0.1:21324':
+                self.assertFalse(dev['needs_passphrase_sent'])
+                self.assertEquals(dev['fingerprint'], '95d8f670')
+        # Setting a passphrase won't change the fingerprint
+        result = self.do_command(self.dev_args + ['-p', 'pass', 'enumerate'])
+        for dev in result:
+            if dev['type'] == 'keepkey' and dev['path'] == 'udp:127.0.0.1:21324':
+                self.assertFalse(dev['needs_passphrase_sent'])
+                self.assertEquals(dev['fingerprint'], '95d8f670')
+
 def keepkey_test_suite(emulator, rpc, userpass, interface):
     # Redirect stderr to /dev/null as it's super spammy
     sys.stderr = open(os.devnull, 'w')
@@ -304,7 +325,10 @@ def keepkey_test_suite(emulator, rpc, userpass, interface):
     suite.addTest(DeviceTestCase.parameterize(TestSignMessage, rpc, userpass, type, full_type, path, fingerprint, master_xpub, emulator=dev_emulator, interface=interface))
     suite.addTest(KeepkeyTestCase.parameterize(TestKeepkeyGetxpub, emulator=dev_emulator, interface=interface))
     suite.addTest(KeepkeyTestCase.parameterize(TestKeepkeyManCommands, emulator=dev_emulator, interface=interface))
-    return suite
+
+    result = unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
+    sys.stderr = sys.__stderr__
+    return result.wasSuccessful()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Test Keepkey implementation')
@@ -316,5 +340,4 @@ if __name__ == '__main__':
     # Start bitcoind
     rpc, userpass = start_bitcoind(args.bitcoind)
 
-    suite = keepkey_test_suite(args.emulator, rpc, userpass, args.interface)
-    unittest.TextTestRunner(stream=sys.stdout, verbosity=2).run(suite)
+    sys.exit(not keepkey_test_suite(args.emulator, rpc, userpass, args.interface))
