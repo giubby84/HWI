@@ -4,7 +4,7 @@
 # Original source: git://github.com/joric/brutus.git
 # which was forked from git://github.com/samrushing/caesure.git
 #
-# Distributed under the MIT/X11 software license, see the accompanying
+# Distributed under the MIT/X11 softwarelib license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 #
 

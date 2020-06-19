@@ -74,28 +74,28 @@ def ledger_test_suite(emulator, rpc, userpass, interface):
             result = self.do_command(self.dev_args + ['-i', 'setup'])
             self.assertIn('error', result)
             self.assertIn('code', result)
-            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support software setup')
+            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support softwarelib setup')
             self.assertEqual(result['code'], -9)
 
         def test_wipe(self):
             result = self.do_command(self.dev_args + ['wipe'])
             self.assertIn('error', result)
             self.assertIn('code', result)
-            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support wiping via software')
+            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support wiping via softwarelib')
             self.assertEqual(result['code'], -9)
 
         def test_restore(self):
             result = self.do_command(self.dev_args + ['-i', 'restore'])
             self.assertIn('error', result)
             self.assertIn('code', result)
-            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support restoring via software')
+            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support restoring via softwarelib')
             self.assertEqual(result['code'], -9)
 
         def test_backup(self):
             result = self.do_command(self.dev_args + ['backup'])
             self.assertIn('error', result)
             self.assertIn('code', result)
-            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support creating a backup via software')
+            self.assertEqual(result['error'], 'The Ledger Nano S and X do not support creating a backup via softwarelib')
             self.assertEqual(result['code'], -9)
 
     class TestLedgerGetXpub(DeviceTestCase):

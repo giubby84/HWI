@@ -173,7 +173,6 @@ class DongleSmartcard(Dongle):
 				pass
 		self.opened = False
 
-
 class DongleServer(Dongle):
 
 	def __init__(self, server, port, debug=False):
@@ -188,7 +187,7 @@ class DongleServer(Dongle):
 
 	def exchange(self, apdu, timeout=20000):
 		if self.debug:
-			print("=> %s" % hexlify(apdu))
+			print("=> %s" % hexlify(apdu))		
 		self.socket.send(struct.pack(">I", len(apdu)))
 		self.socket.send(apdu)
 		size = struct.unpack(">I", self.socket.recv(4))[0]
@@ -205,7 +204,6 @@ class DongleServer(Dongle):
 			self.socket.close()
 		except:
 			pass
-
 
 def getDongle(debug=False):
 	dev = None

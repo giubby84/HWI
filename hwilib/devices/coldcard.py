@@ -190,15 +190,15 @@ class ColdcardClient(HardwareWalletClient):
 
     # Setup a new device
     def setup_device(self, label='', passphrase=''):
-        raise UnavailableActionError('The Coldcard does not support software setup')
+        raise UnavailableActionError('The Coldcard does not support softwarelib setup')
 
     # Wipe this device
     def wipe_device(self):
-        raise UnavailableActionError('The Coldcard does not support wiping via software')
+        raise UnavailableActionError('The Coldcard does not support wiping via softwarelib')
 
     # Restore device from mnemonic or xprv
     def restore_device(self, label='', word_count=24):
-        raise UnavailableActionError('The Coldcard does not support restoring via software')
+        raise UnavailableActionError('The Coldcard does not support restoring via softwarelib')
 
     # Begin backup process
     @coldcard_exception

@@ -2,7 +2,7 @@
 #
 # Copyright (C) 2012-2018 SatoshiLabs and contributors
 #
-# This library is free software: you can redistribute it and/or modify
+# This library is free softwarelib: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License version 3
 # as published by the Free Software Foundation.
 #

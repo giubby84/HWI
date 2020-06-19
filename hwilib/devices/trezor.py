@@ -396,7 +396,7 @@ class TrezorClient(HardwareWalletClient):
 
     # Begin backup process
     def backup_device(self, label='', passphrase=''):
-        raise UnavailableActionError('The {} does not support creating a backup via software'.format(self.type))
+        raise UnavailableActionError('The {} does not support creating a backup via softwarelib'.format(self.type))
 
     # Close the device
     @trezor_exception

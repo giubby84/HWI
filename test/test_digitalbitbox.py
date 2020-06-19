@@ -55,7 +55,7 @@ def digitalbitbox_test_suite(simulator, rpc, userpass, interface):
             result = self.do_command(self.dev_args + ['-i', 'restore'])
             self.assertIn('error', result)
             self.assertIn('code', result)
-            self.assertEqual(result['error'], 'The Digital Bitbox does not support restoring via software')
+            self.assertEqual(result['error'], 'The Digital Bitbox does not support restoring via softwarelib')
             self.assertEqual(result['code'], -9)
 
         def test_pin(self):

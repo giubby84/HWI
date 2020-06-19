@@ -554,7 +554,7 @@ class DigitalbitboxClient(HardwareWalletClient):
 
     # Restore device from mnemonic or xprv
     def restore_device(self, label='', word_count=24):
-        raise UnavailableActionError('The Digital Bitbox does not support restoring via software')
+        raise UnavailableActionError('The Digital Bitbox does not support restoring via softwarelib')
 
     # Begin backup process
     @digitalbitbox_exception

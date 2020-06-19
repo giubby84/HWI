@@ -193,7 +193,7 @@ class TestKeepkeyManCommands(KeepkeyTestCase):
         result = self.do_command(self.dev_args + ['backup'])
         self.assertIn('error', result)
         self.assertIn('code', result)
-        self.assertEqual(result['error'], 'The Keepkey does not support creating a backup via software')
+        self.assertEqual(result['error'], 'The Keepkey does not support creating a backup via softwarelib')
         self.assertEqual(result['code'], -9)
 
     def test_pins(self):

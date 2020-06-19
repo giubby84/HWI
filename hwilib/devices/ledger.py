@@ -4,7 +4,7 @@ from ..hwwclient import HardwareWalletClient
 from ..errors import ActionCanceledError, BadArgumentError, DeviceConnectionError, DeviceFailureError, UnavailableActionError, common_err_msgs, handle_errors
 from .btchip.bitcoinTransaction import bitcoinTransaction
 from .btchip.btchip import btchip
-from .btchip.btchipComm import HIDDongleHIDAPI, getDongle
+from .btchip.btchipComm import DongleServer, HIDDongleHIDAPI
 from .btchip.btchipException import BTChipException
 from .btchip.btchipUtils import compress_public_key
 import base64
@@ -71,18 +71,22 @@ def ledger_exception(f):
 # This class extends the HardwareWalletClient for Ledger Nano S and Nano X specific things
 class LedgerClient(HardwareWalletClient):
 
-    def __init__(self, path, password='', emulator=False):
-        super(LedgerClient, self).__init__(path, password)
-        if emulator:
-            self.dongle = getDongle(True)
-            self.app = btchip(self.dongle)
+    def __init__(self, path, password='', expert=False):
+        super(LedgerClient, self).__init__(path, password, expert)
+
+        if path.startswith('tcp'):
+            split_path = path.split(':')
+            server = split_path[1]
+            port = int(split_path[2])
+            self.dongle = DongleServer(server, port, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
         else:
             device = hid.device()
             device.open_path(path.encode())
             device.set_nonblocking(True)
-            self.dongle = HIDDongleHIDAPI(device, True, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
-            self.app = btchip(self.dongle)
 
+            self.dongle = HIDDongleHIDAPI(device, True, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
+
+        self.app = btchip(self.dongle)
 
     # Must return a dict with the xpub
     # Retrieves the public key at the specified BIP 32 derivation path
@@ -143,7 +147,7 @@ class LedgerClient(HardwareWalletClient):
     # The tx must be in the combined unsigned transaction format
     # Current only supports segwit signing
     @ledger_exception
-    def sign_tx(self, tx, auth=""):
+    def sign_tx(self, tx):
         c_tx = CTransaction(tx.tx)
         tx_bytes = c_tx.serialize_with_witness()
 
@@ -257,12 +261,6 @@ class LedgerClient(HardwareWalletClient):
 
         # Sign any segwit inputs
         if has_segwit:
-            #import pprint
-            #print(f"segwit_inputs = {pprint.pformat(segwit_inputs)}")
-            #print(f"tx_bytes = {tx_bytes}")
-            #print(f"script_code = {script_codes[0]}")
-            #print(f"signature_attempt=\n{all_signature_attempts[0][0][0]}")
-            #import pdb;pdb.set_trace()
             # Process them up front with all scriptcodes blank
             blank_script_code = bytearray()
             for i in range(len(segwit_inputs)):
@@ -278,7 +276,7 @@ class LedgerClient(HardwareWalletClient):
                     continue
                 for signature_attempt in all_signature_attempts[i]:
                     self.app.startUntrustedTransaction(False, 0, [segwit_inputs[i]], script_codes[i], c_tx.nVersion)
-                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], auth, c_tx.nLockTime, 0x01)
+                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], "", c_tx.nLockTime, 0x01)
         elif has_legacy:
             first_input = True
             # Legacy signing if all inputs are legacy
@@ -287,7 +285,7 @@ class LedgerClient(HardwareWalletClient):
                     assert(tx.inputs[i].non_witness_utxo is not None)
                     self.app.startUntrustedTransaction(first_input, i, legacy_inputs, script_codes[i], c_tx.nVersion)
                     self.app.finalizeInput(b"DUMMY", -1, -1, change_path, tx_bytes)
-                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], auth, c_tx.nLockTime, 0x01)
+                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], "", c_tx.nLockTime, 0x01)
                     first_input = False
 
         # Send PSBT back
