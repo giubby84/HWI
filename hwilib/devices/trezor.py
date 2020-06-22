@@ -9,8 +9,8 @@ from .trezorlib.transport import enumerate_devices, get_transport, TREZOR_VENDOR
 from .trezorlib.ui import echo, PassphraseUI, mnemonic_words, PIN_CURRENT, PIN_NEW, PIN_CONFIRM, PIN_MATRIX_DESCRIPTION, prompt
 from .trezorlib import tools, btc, device
 from .trezorlib import messages as proto
-from ..base58 import get_xpub_fingerprint, to_address, xpub_main_2_test, get_xpub_fingerprint_hex
-from ..serializations import CTxOut, ser_uint256
+from ..base58 import get_xpub_fingerprint, to_address, xpub_main_2_test
+from ..serializations import CTxOut, ExtendedKey, ser_uint256
 from .. import bech32
 from usb1 import USBErrorNoDevice
 from types import MethodType
@@ -89,8 +89,8 @@ def interactive_get_pin(self, code=None):
 # This class extends the HardwareWalletClient for Trezor specific things
 class TrezorClient(HardwareWalletClient):
 
-    def __init__(self, path, password=''):
-        super(TrezorClient, self).__init__(path, password)
+    def __init__(self, path, password='', expert=False):
+        super(TrezorClient, self).__init__(path, password, expert)
         self.simulator = False
         if path.startswith('udp'):
             logging.debug('Simulator found, using DebugLink')
@@ -110,6 +110,8 @@ class TrezorClient(HardwareWalletClient):
 
     def _check_unlocked(self):
         self.client.init_device()
+        if self.client.features.model == 'T':
+            self.client.ui.disallow_passphrase()
         if self.client.features.pin_protection and not self.client.features.pin_cached:
             raise DeviceNotReadyError('{} is locked. Unlock by using \'promptpin\' and then \'sendpin\'.'.format(self.type))
 
@@ -124,9 +126,14 @@ class TrezorClient(HardwareWalletClient):
             raise BadArgumentError(str(e))
         output = btc.get_public_node(self.client, expanded_path)
         if self.is_testnet:
-            return {'xpub': xpub_main_2_test(output.xpub)}
+            result = {'xpub': xpub_main_2_test(output.xpub)}
         else:
-            return {'xpub': output.xpub}
+            result = {'xpub': output.xpub}
+        if self.expert:
+            xpub_obj = ExtendedKey()
+            xpub_obj.deserialize(output.xpub)
+            result.update(xpub_obj.get_printable_dict())
+        return result
 
     # Must return a hex string with the signed transaction
     # The tx must be in the psbt format
@@ -206,12 +213,16 @@ class TrezorClient(HardwareWalletClient):
                     continue
 
                 # Find key to sign with
-                found = False
+                found = False # Whether we have found a key to sign with
+                found_in_sigs = False # Whether we have found one of our keys in the signatures
                 our_keys = 0
                 for key in psbt_in.hd_keypaths.keys():
                     keypath = psbt_in.hd_keypaths[key]
-                    if keypath[0] == master_fp and key not in psbt_in.partial_sigs:
-                        if not found:
+                    if keypath[0] == master_fp:
+                        if key in psbt_in.partial_sigs: # This key already has a signature
+                            found_in_sigs = True
+                            continue
+                        if not found: # This key does not have a signature and we don't have a key to sign with yet
                             txinputtype.address_n = keypath[1:]
                             found = True
                         our_keys += 1
@@ -220,10 +231,12 @@ class TrezorClient(HardwareWalletClient):
                 if our_keys > passes:
                     passes = our_keys
 
-                if not found:
+                if not found and not found_in_sigs: # None of our keys were in hd_keypaths or in partial_sigs
                     # This input is not one of ours
                     ignore_input()
                     continue
+                elif not found and found_in_sigs: # All of our keys are in partial_sigs, ignore whatever signature is produced for this input
+                    to_ignore.append(input_num)
 
                 # append to inputs
                 inputs.append(txinputtype)
@@ -372,18 +385,18 @@ class TrezorClient(HardwareWalletClient):
 
     # Restore device from mnemonic or xprv
     @trezor_exception
-    def restore_device(self, label=''):
+    def restore_device(self, label='', word_count=24):
         self.client.init_device()
         if not self.simulator:
             # Use interactive_get_pin
             self.client.ui.get_pin = MethodType(interactive_get_pin, self.client.ui)
 
-        device.recover(self.client, label=label, input_callback=mnemonic_words(), passphrase_protection=bool(self.password))
+        device.recover(self.client, word_count=word_count, label=label, input_callback=mnemonic_words(), passphrase_protection=bool(self.password))
         return {'success': True}
 
     # Begin backup process
     def backup_device(self, label='', passphrase=''):
-        raise UnavailableActionError('The {} does not support creating a backup via software'.format(self.type))
+        raise UnavailableActionError('The {} does not support creating a backup via softwarelib'.format(self.type))
 
     # Close the device
     @trezor_exception
@@ -401,7 +414,7 @@ class TrezorClient(HardwareWalletClient):
             raise DeviceAlreadyUnlockedError('The PIN has already been sent to this device')
         print('Use \'sendpin\' to provide the number positions for the PIN as displayed on your device\'s screen', file=sys.stderr)
         print(PIN_MATRIX_DESCRIPTION, file=sys.stderr)
-        self.client.call_raw(proto.Ping(message=b'ping', button_protection=False, pin_protection=True, passphrase_protection=False))
+        self.client.call_raw(proto.GetPublicKey(address_n=[0x8000002c, 0x80000001, 0x80000000], ecdsa_curve_name=None, show_display=False, coin_name=None, script_type=proto.InputScriptType.SPENDADDRESS))
         return {'success': True}
 
     # Send the pin
@@ -420,6 +433,12 @@ class TrezorClient(HardwareWalletClient):
                     raise DeviceAlreadyUnlockedError('The PIN has already been sent to this device')
             return {'success': False}
         return {'success': True}
+
+    # Toggle passphrase
+    @trezor_exception
+    def toggle_passphrase(self):
+        self._check_unlocked()
+        return device.apply_settings(self.client, use_passphrase=not self.client.features.passphrase_protection)
 
 def enumerate(password=''):
     results = []
@@ -448,14 +467,13 @@ def enumerate(password=''):
             if client.client.features.model == '1':
                 d_data['needs_passphrase_sent'] = client.client.features.passphrase_protection # always need the passphrase sent for Trezor One if it has passphrase protection enabled
             else:
-                d_data['needs_passphrase_sent'] = client.client.features.passphrase_protection and not client.client.features.passphrase_cached
+                d_data['needs_passphrase_sent'] = False
             if d_data['needs_pin_sent']:
                 raise DeviceNotReadyError('Trezor is locked. Unlock by using \'promptpin\' and then \'sendpin\'.')
             if d_data['needs_passphrase_sent'] and not password:
                 raise DeviceNotReadyError("Passphrase needs to be specified before the fingerprint information can be retrieved")
             if client.client.features.initialized:
-                master_xpub = client.get_pubkey_at_path('m/0h')['xpub']
-                d_data['fingerprint'] = get_xpub_fingerprint_hex(master_xpub)
+                d_data['fingerprint'] = client.get_master_fingerprint_hex()
                 d_data['needs_passphrase_sent'] = False # Passphrase is always needed for the above to have worked, so it's already sent
             else:
                 d_data['error'] = 'Not initialized'

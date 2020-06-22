@@ -16,8 +16,8 @@ import time
 
 from ..hwwclient import HardwareWalletClient
 from ..errors import ActionCanceledError, BadArgumentError, DeviceFailureError, DeviceAlreadyInitError, DEVICE_NOT_INITIALIZED, DeviceNotReadyError, NoPasswordError, UnavailableActionError, common_err_msgs, handle_errors
-from ..serializations import CTransaction, hash256, ser_sig_der, ser_sig_compact, ser_compact_size
-from ..base58 import get_xpub_fingerprint, xpub_main_2_test, get_xpub_fingerprint_hex
+from ..serializations import CTransaction, ExtendedKey, hash256, ser_sig_der, ser_sig_compact, ser_compact_size
+from ..base58 import get_xpub_fingerprint, xpub_main_2_test
 
 applen = 225280 # flash size minus bootloader length
 chunksize = 8 * 512
@@ -296,8 +296,8 @@ def format_backup_filename(name):
 # This class extends the HardwareWalletClient for Digital Bitbox specific things
 class DigitalbitboxClient(HardwareWalletClient):
 
-    def __init__(self, path, password):
-        super(DigitalbitboxClient, self).__init__(path, password)
+    def __init__(self, path, password, expert=False):
+        super(DigitalbitboxClient, self).__init__(path, password, expert)
         if not password:
             raise NoPasswordError('Password must be supplied for digital BitBox')
         if path.startswith('udp:'):
@@ -321,9 +321,14 @@ class DigitalbitboxClient(HardwareWalletClient):
             raise DBBError(reply)
 
         if self.is_testnet:
-            return {'xpub': xpub_main_2_test(reply['xpub'])}
+            result = {'xpub': xpub_main_2_test(reply['xpub'])}
         else:
-            return {'xpub': reply['xpub']}
+            result = {'xpub': reply['xpub']}
+        if self.expert:
+            xpub_obj = ExtendedKey()
+            xpub_obj.deserialize(reply['xpub'])
+            result.update(xpub_obj.get_printable_dict())
+        return result
 
     # Must return a hex string with the signed transaction
     # The tx must be in the PSBT format
@@ -548,8 +553,8 @@ class DigitalbitboxClient(HardwareWalletClient):
         return {'success': True}
 
     # Restore device from mnemonic or xprv
-    def restore_device(self, label=''):
-        raise UnavailableActionError('The Digital Bitbox does not support restoring via software')
+    def restore_device(self, label='', word_count=24):
+        raise UnavailableActionError('The Digital Bitbox does not support restoring via softwarelib')
 
     # Begin backup process
     @digitalbitbox_exception
@@ -577,6 +582,10 @@ class DigitalbitboxClient(HardwareWalletClient):
     # Send pin
     def send_pin(self, pin):
         raise UnavailableActionError('The Digital Bitbox does not need a PIN sent from the host')
+
+    # Toggle passphrase
+    def toggle_passphrase(self):
+        raise UnavailableActionError('The Digital Bitbox does not support toggling passphrase from the host')
 
 def enumerate(password=''):
     results = []
@@ -611,8 +620,7 @@ def enumerate(password=''):
                     d_data['error'] = 'Not initialized'
                     d_data['code'] = DEVICE_NOT_INITIALIZED
                 else:
-                    master_xpub = client.get_pubkey_at_path('m/0h')['xpub']
-                    d_data['fingerprint'] = get_xpub_fingerprint_hex(master_xpub)
+                    d_data['fingerprint'] = client.get_master_fingerprint_hex()
                 d_data['needs_pin_sent'] = False
                 d_data['needs_passphrase_sent'] = True
 

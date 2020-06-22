@@ -4,17 +4,18 @@ from ..hwwclient import HardwareWalletClient
 from ..errors import ActionCanceledError, BadArgumentError, DeviceConnectionError, DeviceFailureError, UnavailableActionError, common_err_msgs, handle_errors
 from .btchip.bitcoinTransaction import bitcoinTransaction
 from .btchip.btchip import btchip
-from .btchip.btchipComm import HIDDongleHIDAPI, getDongle
+from .btchip.btchipComm import DongleServer, HIDDongleHIDAPI
 from .btchip.btchipException import BTChipException
 from .btchip.btchipUtils import compress_public_key
 import base64
 import hid
 import struct
 from .. import base58
-from ..base58 import get_xpub_fingerprint_hex
-from ..serializations import hash256, hash160, CTransaction
+from ..serializations import ExtendedKey, hash256, hash160, CTransaction
 import logging
 import re
+
+SIMULATOR_PATH = 'tcp:127.0.0.1:9999'
 
 LEDGER_VENDOR_ID = 0x2c97
 LEDGER_DEVICE_IDS = [
@@ -70,18 +71,22 @@ def ledger_exception(f):
 # This class extends the HardwareWalletClient for Ledger Nano S and Nano X specific things
 class LedgerClient(HardwareWalletClient):
 
-    def __init__(self, path, password='', emulator=False):
-        super(LedgerClient, self).__init__(path, password)
-        if emulator:
-            self.dongle = getDongle(True)
-            self.app = btchip(self.dongle)
+    def __init__(self, path, password='', expert=False):
+        super(LedgerClient, self).__init__(path, password, expert)
+
+        if path.startswith('tcp'):
+            split_path = path.split(':')
+            server = split_path[1]
+            port = int(split_path[2])
+            self.dongle = DongleServer(server, port, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
         else:
             device = hid.device()
             device.open_path(path.encode())
             device.set_nonblocking(True)
 
             self.dongle = HIDDongleHIDAPI(device, True, logging.getLogger().getEffectiveLevel() == logging.DEBUG)
-            self.app = btchip(self.dongle)
+
+        self.app = btchip(self.dongle)
 
     # Must return a dict with the xpub
     # Retrieves the public key at the specified BIP 32 derivation path
@@ -129,13 +134,20 @@ class LedgerClient(HardwareWalletClient):
         extkey = version + depth + fpr + child + chainCode + publicKey
         checksum = hash256(extkey)[:4]
 
-        return {"xpub": base58.encode(extkey + checksum)}
+        xpub = base58.encode(extkey + checksum)
+        result = {"xpub": xpub}
+
+        if self.expert:
+            xpub_obj = ExtendedKey()
+            xpub_obj.deserialize(xpub)
+            result.update(xpub_obj.get_printable_dict())
+        return result
 
     # Must return a hex string with the signed transaction
     # The tx must be in the combined unsigned transaction format
     # Current only supports segwit signing
     @ledger_exception
-    def sign_tx(self, tx, auth=""):
+    def sign_tx(self, tx):
         c_tx = CTransaction(tx.tx)
         tx_bytes = c_tx.serialize_with_witness()
 
@@ -249,12 +261,6 @@ class LedgerClient(HardwareWalletClient):
 
         # Sign any segwit inputs
         if has_segwit:
-            #import pprint
-            #print(f"segwit_inputs = {pprint.pformat(segwit_inputs)}")
-            #print(f"tx_bytes = {tx_bytes}")
-            #print(f"script_code = {script_codes[0]}")
-            #print(f"signature_attempt=\n{all_signature_attempts[0][0][0]}")
-            #import pdb;pdb.set_trace()
             # Process them up front with all scriptcodes blank
             blank_script_code = bytearray()
             for i in range(len(segwit_inputs)):
@@ -270,7 +276,7 @@ class LedgerClient(HardwareWalletClient):
                     continue
                 for signature_attempt in all_signature_attempts[i]:
                     self.app.startUntrustedTransaction(False, 0, [segwit_inputs[i]], script_codes[i], c_tx.nVersion)
-                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], auth, c_tx.nLockTime, 0x01)
+                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], "", c_tx.nLockTime, 0x01)
         elif has_legacy:
             first_input = True
             # Legacy signing if all inputs are legacy
@@ -279,7 +285,7 @@ class LedgerClient(HardwareWalletClient):
                     assert(tx.inputs[i].non_witness_utxo is not None)
                     self.app.startUntrustedTransaction(first_input, i, legacy_inputs, script_codes[i], c_tx.nVersion)
                     self.app.finalizeInput(b"DUMMY", -1, -1, change_path, tx_bytes)
-                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], auth, c_tx.nLockTime, 0x01)
+                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], "", c_tx.nLockTime, 0x01)
                     first_input = False
 
         # Send PSBT back
@@ -328,7 +334,7 @@ class LedgerClient(HardwareWalletClient):
         raise UnavailableActionError('The Ledger Nano S and X do not support wiping via software')
 
     # Restore device from mnemonic or xprv
-    def restore_device(self, label=''):
+    def restore_device(self, label='', word_count=24):
         raise UnavailableActionError('The Ledger Nano S and X do not support restoring via software')
 
     # Begin backup process
@@ -347,29 +353,47 @@ class LedgerClient(HardwareWalletClient):
     def send_pin(self, pin):
         raise UnavailableActionError('The Ledger Nano S and X do not need a PIN sent from the host')
 
+    # Toggle passphrase
+    def toggle_passphrase(self):
+        raise UnavailableActionError('The Ledger Nano S and X do not support toggling passphrase from the host')
+
 def enumerate(password=''):
     results = []
+    devices = []
     for device_id in LEDGER_DEVICE_IDS:
-        for d in hid.enumerate(LEDGER_VENDOR_ID, device_id):
-            if ('interface_number' in d and d['interface_number'] == 0
-                    or ('usage_page' in d and d['usage_page'] == 0xffa0)):
-                d_data = {}
+        devices.extend(hid.enumerate(LEDGER_VENDOR_ID, device_id))
+    devices.append({'path': SIMULATOR_PATH.encode(), 'interface_number': 0, 'product_id': 1})
 
-                path = d['path'].decode()
-                d_data['type'] = 'ledger'
-                d_data['model'] = 'ledger_nano_x' if device_id == 0x0004 else 'ledger_nano_s'
-                d_data['path'] = path
+    for d in devices:
+        if ('interface_number' in d and d['interface_number'] == 0
+                or ('usage_page' in d and d['usage_page'] == 0xffa0)):
+            d_data = {}
 
-                client = None
-                with handle_errors(common_err_msgs["enumerate"], d_data):
+            path = d['path'].decode()
+            d_data['type'] = 'ledger'
+            d_data['model'] = 'ledger_nano_x' if d['product_id'] == 0x0004 else 'ledger_nano_s'
+            d_data['path'] = path
+
+            if path == SIMULATOR_PATH:
+                d_data['model'] += '_simulator'
+
+            client = None
+            with handle_errors(common_err_msgs["enumerate"], d_data):
+                try:
                     client = LedgerClient(path, password)
-                    master_xpub = client.get_pubkey_at_path('m/0h')['xpub']
-                    d_data['fingerprint'] = get_xpub_fingerprint_hex(master_xpub)
+                    d_data['fingerprint'] = client.get_master_fingerprint_hex()
                     d_data['needs_pin_sent'] = False
                     d_data['needs_passphrase_sent'] = False
+                except BTChipException:
+                    # Ignore simulator if there's an exception, means it isn't there
+                    if path == SIMULATOR_PATH:
+                        continue
+                    else:
+                        raise
 
-                if client:
-                    client.close()
+            if client:
+                client.close()
 
-                results.append(d_data)
+            results.append(d_data)
+
     return results

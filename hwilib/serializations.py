@@ -2,7 +2,7 @@
 # Copyright (c) 2010 ArtForz -- public domain half-a-node
 # Copyright (c) 2012 Jeff Garzik
 # Copyright (c) 2010-2016 The Bitcoin Core developers
-# Distributed under the MIT software license, see the accompanying
+# Distributed under the MIT softwarelib license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Bitcoin Object Python Serializations
 
@@ -18,6 +18,8 @@ ser_*, deser_*: functions that handle serialization/deserialization
 from io import BytesIO, BufferedReader
 from codecs import encode
 from .errors import PSBTSerializationError
+from . import base58
+
 import struct
 import binascii
 import hashlib
@@ -38,16 +40,16 @@ def hash160(s):
 
 
 # Serialization/deserialization tools
-def ser_compact_size(l):
+def ser_compact_size(size):
     r = b""
-    if l < 253:
-        r = struct.pack("B", l)
-    elif l < 0x10000:
-        r = struct.pack("<BH", 253, l)
-    elif l < 0x100000000:
-        r = struct.pack("<BI", 254, l)
+    if size < 253:
+        r = struct.pack("B", size)
+    elif size < 0x10000:
+        r = struct.pack("<BH", 253, size)
+    elif size < 0x100000000:
+        r = struct.pack("<BI", 254, size)
     else:
-        r = struct.pack("<BQ", 255, l)
+        r = struct.pack("<BQ", 255, size)
     return r
 
 def deser_compact_size(f):
@@ -104,9 +106,9 @@ def deser_vector(f, c):
 # ser_function_name: Allow for an alternate serialization function on the
 # entries in the vector (we use this for serializing the vector of transactions
 # for a witness block).
-def ser_vector(l, ser_function_name=None):
-    r = ser_compact_size(len(l))
-    for i in l:
+def ser_vector(v, ser_function_name=None):
+    r = ser_compact_size(len(v))
+    for i in v:
         if ser_function_name:
             r += getattr(i, ser_function_name)()
         else:
@@ -123,9 +125,9 @@ def deser_string_vector(f):
     return r
 
 
-def ser_string_vector(l):
-    r = ser_compact_size(len(l))
-    for sv in l:
+def ser_string_vector(v):
+    r = ser_compact_size(len(v))
+    for sv in v:
         r += ser_string(sv)
     return r
 
@@ -610,7 +612,8 @@ class PartiallySignedInput:
 
         if not self.final_script_witness.is_null():
             r += ser_string(b"\x08")
-            r += self.final_script_witness.serialize()
+            witstack = self.final_script_witness.serialize()
+            r += ser_string(witstack)
 
         for key, value in sorted(self.unknown.items()):
             r += ser_string(key)
@@ -833,3 +836,55 @@ class PSBT(object):
             if not input.is_sane():
                 return False
         return True
+
+# An extended public key (xpub) or private key (xprv). Just a data container for now.
+# Only handles deserialization of extended keys into component data to be handled by something else
+class ExtendedKey(object):
+
+    MAINNET_PUBLIC = b'\x04\x88\xB2\x1E'
+    MAINNET_PRIVATE = b'\x04\x88\xAD\xE4'
+    TESTNET_PUBLIC = b'\x04\x35\x87\xCF'
+    TESTNET_PRIVATE = b'\x04\x35\x83\x94'
+
+    def __init__(self):
+        self.is_testnet = False
+        self.is_private = False
+        self.depth = 0
+        self.parent_fingerprint = b''
+        self.child_num = 0
+        self.chaincode = b''
+        self.pubkey = b''
+        self.privkey = b''
+
+    def deserialize(self, xpub: str):
+        data = base58.decode(xpub)[:-4] # Decoded xpub without checksum
+
+        version = data[0:4]
+        if version == ExtendedKey.TESTNET_PUBLIC or version == ExtendedKey.TESTNET_PRIVATE:
+            self.is_testnet = True
+        if version == ExtendedKey.MAINNET_PRIVATE or version == ExtendedKey.TESTNET_PRIVATE:
+            self.is_private = True
+
+        self.depth = data[4]
+        self.parent_fingerprint = data[5:9]
+        self.child_num = struct.unpack('>I', data[9:13])[0]
+        self.chaincode = data[13:45]
+
+        if self.is_private:
+            self.privkey = data[46:]
+        else:
+            self.pubkey = data[45:78]
+
+    def get_printable_dict(self):
+        d = {}
+        d['testnet'] = self.is_testnet
+        d['private'] = self.is_private
+        d['depth'] = self.depth
+        d['parent_fingerprint'] = binascii.hexlify(self.parent_fingerprint).decode()
+        d['child_num'] = self.child_num
+        d['chaincode'] = binascii.hexlify(self.chaincode).decode()
+        if self.is_private:
+            d['privkey'] = binascii.hexlify(self.privkey).decode()
+        else:
+            d['pubkey'] = binascii.hexlify(self.pubkey).decode()
+        return d

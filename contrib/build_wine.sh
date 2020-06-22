@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script which sets up Wine and builds the Windows standalone binary
 
-set -e
+set -ex
 
 PYTHON_VERSION=3.6.8
 
@@ -67,15 +67,26 @@ TZ=UTC find ${lib_dir} -name '*.py' -type f -execdir touch -t "201901010000.00" 
 # Install python dependencies
 POETRY="wine $PYHOME/Scripts/poetry.exe"
 sleep 5 # For some reason, pausing for a few seconds makes the next step work
-$POETRY install
+$POETRY install -E qt
+
+# make the ui files
+pushd hwilib/ui
+for file in *.ui
+do
+    gen_file=ui_`echo $file| cut -d. -f1`.py
+    $POETRY run pyside2-uic $file -o $gen_file
+    sed -i 's/raise()/raise_()/g' $gen_file
+done
+popd
 
 # Do the build
 export PYTHONHASHSEED=42
 $POETRY run pyinstaller hwi.spec
+$POETRY run pyinstaller hwi-qt.spec
 unset PYTHONHASHSEED
 
 # Make the final compressed package
 pushd dist
 VERSION=`$POETRY run hwi --version | cut -d " " -f 2 | dos2unix`
-zip "hwi-${VERSION}-windows-amd64.zip" hwi.exe
+zip "hwi-${VERSION}-windows-amd64.zip" hwi.exe hwi-qt.exe
 popd

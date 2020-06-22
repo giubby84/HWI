@@ -3,13 +3,12 @@
 from ..errors import DEVICE_NOT_INITIALIZED, DeviceNotReadyError, common_err_msgs, handle_errors
 from .trezorlib.transport import enumerate_devices, KEEPKEY_VENDOR_IDS
 from .trezor import TrezorClient
-from ..base58 import get_xpub_fingerprint_hex
 
 py_enumerate = enumerate # Need to use the enumerate built-in but there's another function already named that
 
 class KeepkeyClient(TrezorClient):
-    def __init__(self, path, password=''):
-        super(KeepkeyClient, self).__init__(path, password)
+    def __init__(self, path, password='', expert=False):
+        super(KeepkeyClient, self).__init__(path, password, expert)
         self.type = 'Keepkey'
 
 def enumerate(password=''):
@@ -43,8 +42,7 @@ def enumerate(password=''):
             if d_data['needs_passphrase_sent'] and not password:
                 raise DeviceNotReadyError("Passphrase needs to be specified before the fingerprint information can be retrieved")
             if client.client.features.initialized:
-                master_xpub = client.get_pubkey_at_path('m/0h')['xpub']
-                d_data['fingerprint'] = get_xpub_fingerprint_hex(master_xpub)
+                d_data['fingerprint'] = client.get_master_fingerprint_hex()
                 d_data['needs_passphrase_sent'] = False # Passphrase is always needed for the above to have worked, so it's already sent
             else:
                 d_data['error'] = 'Not initialized'

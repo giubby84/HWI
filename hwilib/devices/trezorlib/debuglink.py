@@ -2,7 +2,7 @@
 #
 # Copyright (C) 2012-2018 SatoshiLabs and contributors
 #
-# This library is free software: you can redistribute it and/or modify
+# This library is free softwarelib: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License version 3
 # as published by the Free Software Foundation.
 #
@@ -159,6 +159,7 @@ class DebugUI:
         self.pin = None
         self.passphrase = "sphinx of black quartz, judge my wov"
         self.input_flow = None
+        self.return_passphrase = True
 
     def button_request(self, code):
         if self.input_flow is None:
@@ -177,8 +178,13 @@ class DebugUI:
         else:
             return self.debuglink.read_pin_encoded()
 
+    def disallow_passphrase(self):
+        self.return_passphrase = False
+
     def get_passphrase(self):
-        return self.passphrase
+        if self.return_passphrase:
+            return self.passphrase
+        raise ValueError('Passphrase from Host is not allowed for Trezor T')
 
 
 class TrezorClientDebugLink(TrezorClient):
