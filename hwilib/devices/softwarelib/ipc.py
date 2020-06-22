@@ -2,7 +2,7 @@ import socket
 import traceback
 from typing import Optional
 
-from .IpcMessage import IpcMessage
+from .ipc_message import IpcMessage
 from .settings import LISTEN_PORT
 
 
@@ -58,7 +58,9 @@ def ipc_send_message(sock: socket.socket, msg: IpcMessage) -> bool:
         return False
 
 
-def ipc_send_and_get_response(sock: socket.socket, msg: IpcMessage) -> Optional[IpcMessage]:
+def ipc_send_and_get_response(
+    sock: socket.socket, msg: IpcMessage
+) -> Optional[IpcMessage]:
     if not ipc_send_message(sock, msg):
         return None
 

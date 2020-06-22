@@ -2,7 +2,7 @@
 import base64
 
 from hwilib.devices.softwarelib.ipc import ipc_connect, ipc_send_and_get_response
-from hwilib.devices.softwarelib.IpcMessage import (
+from hwilib.devices.softwarelib.ipc_message import (
     AUTHORIZE_TX,
     PING,
     SIGN_TX,
