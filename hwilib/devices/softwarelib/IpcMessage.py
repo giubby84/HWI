@@ -1,13 +1,13 @@
-import base64
-from typing import Optional
-
-
 SIGN_TX = "sign"
 AUTHORIZE_TX = "auth"
 RESP = "resp"
 PING = "ping"
+EXIT = "exit"
 
 
+# Class that represents an ipc message: a command with a raw payload
+# For serialization capability the payload is always a string so use
+# base64 encoding for binary data
 class IpcMessage:
     def __init__(self, cmd: str, value: str):
         self._cmd = cmd
