@@ -8,7 +8,7 @@ from hwilib.devices.softwarelib.ipc_message import (
     SIGN_TX,
     IpcMessage,
 )
-from hwilib.devices.softwarelib.settings import LISTEN_PORT
+from hwilib.devices.softwarelib.settings import LISTEN_PORT, PORT_RANGE
 
 from ..errors import ActionCanceledError, DeviceConnectionError, UnavailableActionError
 
@@ -16,11 +16,12 @@ from ..errors import ActionCanceledError, DeviceConnectionError, UnavailableActi
 from ..hwwclient import HardwareWalletClient
 
 
-# This class extends the HardwareWalletClient for Ledger Nano S and Nano X specific things
+# This class extends the HardwareWalletClient a generic software device
 class SoftwareClient(HardwareWalletClient):
     def __init__(self, path, password="", expert=False):
         super(SoftwareClient, self).__init__(path, password, expert)
-        # Nothing special to do here
+        # Used to know where to connect for this device
+        self.port = int(path.split(":")[1])
 
     # Must return a dict with the xpub
     # Retrieves the public key at the specified BIP 32 derivation path
@@ -32,11 +33,11 @@ class SoftwareClient(HardwareWalletClient):
     # The tx must be in the combined unsigned transaction format
     # Current only supports segwit signing
     def sign_tx(self, tx, auth=""):
-        sock = ipc_connect()
+        sock = ipc_connect(self.port)
 
         if sock is None:
             raise DeviceConnectionError(
-                "Unable to open a tcp socket with the softwarelib device"
+                "Unable to open a tcp socket with the software device"
             )
 
         serialized_psbt = tx.serialize()
@@ -55,7 +56,7 @@ class SoftwareClient(HardwareWalletClient):
     # Must return a base64 encoded string with the signed message
     # The message can be any string
     def sign_message(self, message, keypath):
-        sock = ipc_connect()
+        sock = ipc_connect(self.port)
 
         if sock is None:
             raise DeviceConnectionError(
@@ -114,29 +115,33 @@ class SoftwareClient(HardwareWalletClient):
 def enumerate(password=""):
     results = []
 
-    sock = ipc_connect()
+    # Loop on the range port to check listening devices
+    for i in range(PORT_RANGE):
+        try:
+            port = LISTEN_PORT + i
+            sock = ipc_connect(port)
 
-    if sock is None:
-        return results
+            if sock is None:
+                continue
 
-    if ipc_send_and_get_response(sock, IpcMessage(PING, "")) is None:
-        return results
+            ping_resp = ipc_send_and_get_response(sock, IpcMessage(PING, ""))
+            if ping_resp is None:
+                continue
 
-    # TODO: Ask some data to the softwarelib device
+            fingerprint = ping_resp.get_raw_value()
 
-    d_data = {}
-    d_data["type"] = "checksig"
-    d_data["model"] = "checksig_software_wallet"
-    d_data["path"] = "127.0.0.1:" + str(LISTEN_PORT)
-    d_data["needs_pin_sent"] = False
-    d_data["needs_passphrase_sent"] = False
+            d_data = {}
+            d_data["type"] = "checksig"
+            d_data["model"] = "checksig_software_wallet"
+            d_data["path"] = "127.0.0.1:" + str(port)
+            d_data["needs_pin_sent"] = False
+            d_data["needs_passphrase_sent"] = False
 
-    d_data["fingerprint"] = "deadbeef"
+            d_data["fingerprint"] = fingerprint
+            results.append(d_data)
 
-    # d_data['error'] = 'Not initialized'
-    # d_data['code'] = DEVICE_NOT_INITIALIZED
+            sock.close()
+        except:
+            continue
 
-    results.append(d_data)
-
-    sock.close()
     return results

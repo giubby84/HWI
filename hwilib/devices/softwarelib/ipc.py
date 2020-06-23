@@ -6,10 +6,10 @@ from .ipc_message import IpcMessage
 from .settings import LISTEN_PORT
 
 
-def ipc_connect() -> Optional[socket.socket]:
+def ipc_connect(port: int) -> Optional[socket.socket]:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect(("127.0.0.1", LISTEN_PORT))
+        sock.connect(("127.0.0.1", port))
         return sock
     except:
         return None
