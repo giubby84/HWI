@@ -1,14 +1,14 @@
 # from ..errors import BadArgumentError, DeviceFailureError, common_err_msgs, handle_errors
 import base64
 
-from hwilib.devices.softwarelib.ipc import ipc_connect, ipc_send_and_get_response
-from hwilib.devices.softwarelib.ipc_message import (
+from hwilib.devices.checksiglib.ipc import ipc_connect, ipc_send_and_get_response
+from hwilib.devices.checksiglib.ipc_message import (
     AUTHORIZE_TX,
     PING,
     SIGN_TX,
     IpcMessage,
 )
-from hwilib.devices.softwarelib.settings import LISTEN_PORT, PORT_RANGE
+from hwilib.devices.checksiglib.settings import LISTEN_PORT, PORT_RANGE
 
 from ..errors import ActionCanceledError, DeviceConnectionError, UnavailableActionError
 
@@ -17,9 +17,9 @@ from ..hwwclient import HardwareWalletClient
 
 
 # This class extends the HardwareWalletClient a generic software device
-class SoftwareClient(HardwareWalletClient):
+class ChecksigClient(HardwareWalletClient):
     def __init__(self, path, password="", expert=False):
-        super(SoftwareClient, self).__init__(path, password, expert)
+        super(ChecksigClient, self).__init__(path, password, expert)
         # Used to know where to connect for this device
         self.port = int(path.split(":")[1])
 
@@ -73,7 +73,7 @@ class SoftwareClient(HardwareWalletClient):
             raise ActionCanceledError("Something wrong signing with software device")
 
         # Send PSBT back
-        return resp.get_raw_value()
+        return base64.b64decode(resp.get_raw_value())
 
     def display_address(self, keypath, p2sh_p2wpkh, bech32):
         raise UnavailableActionError("Not available for software device")
@@ -97,7 +97,6 @@ class SoftwareClient(HardwareWalletClient):
     # Close the device
     def close(self):
         pass
-        # self.dongle.close()
 
     # Prompt pin
     def prompt_pin(self):
