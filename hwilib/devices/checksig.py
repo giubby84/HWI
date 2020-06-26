@@ -32,7 +32,7 @@ class ChecksigClient(HardwareWalletClient):
     # Must return a hex string with the signed transaction
     # The tx must be in the combined unsigned transaction format
     # Current only supports segwit signing
-    def sign_tx(self, tx, auth=""):
+    def sign_tx(self, tx):
         sock = ipc_connect(self.port)
 
         if sock is None:
@@ -41,8 +41,7 @@ class ChecksigClient(HardwareWalletClient):
             )
 
         serialized_psbt = tx.serialize()
-        auth_b64 = base64.b64encode(auth).decode("utf-8")
-        data = serialized_psbt + "\n" + auth_b64
+        data = serialized_psbt + "\n"
         msg = IpcMessage(SIGN_TX, data)
 
         resp = ipc_send_and_get_response(sock, msg)

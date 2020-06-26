@@ -10,6 +10,7 @@ from .base58 import xpub_to_pub_hex
 from .errors import UnknownDeviceError, BAD_ARGUMENT, NOT_IMPLEMENTED
 from .descriptor import Descriptor
 from .devices import __all__ as all_devs
+from .devices import __cs__ as cs_devs
 from enum import Enum
 
 class AddressType(Enum):
@@ -40,6 +41,17 @@ def enumerate(password=''):
     result = []
 
     for module in all_devs:
+        try:
+            imported_dev = importlib.import_module('.devices.' + module, __package__)
+            result.extend(imported_dev.enumerate(password))
+        except ImportError:
+            pass # Ignore ImportErrors, the user may not have all device dependencies installed
+    return result
+
+def enumerate_cs(password=''):
+    result = []
+
+    for module in cs_devs:
         try:
             imported_dev = importlib.import_module('.devices.' + module, __package__)
             result.extend(imported_dev.enumerate(password))

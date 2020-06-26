@@ -1,17 +1,37 @@
 # Ledger interaction script
 
 from ..hwwclient import HardwareWalletClient
-from ..errors import ActionCanceledError, BadArgumentError, DeviceConnectionError, DeviceFailureError, UnavailableActionError, common_err_msgs, handle_errors
+from ..errors import (
+    ActionCanceledError,
+    BadArgumentError,
+    DeviceConnectionError,
+    DeviceFailureError,
+    UnavailableActionError,
+    common_err_msgs,
+    handle_errors,
+)
 from .btchip.bitcoinTransaction import bitcoinTransaction
 from .btchip.btchip import btchip
-from .btchip.btchipComm import DongleServer, HIDDongleHIDAPI
+from .btchip.btchipComm import (
+    DongleServer,
+    HIDDongleHIDAPI,
+)
 from .btchip.btchipException import BTChipException
 from .btchip.btchipUtils import compress_public_key
 import base64
 import hid
 import struct
 from .. import base58
-from ..serializations import ExtendedKey, hash256, hash160, CTransaction
+from ..serializations import (
+    ExtendedKey,
+    hash256,
+    hash160,
+    is_p2sh,
+    is_p2wpkh,
+    is_p2wsh,
+    is_witness,
+    CTransaction,
+)
 import logging
 import re
 
@@ -147,7 +167,7 @@ class LedgerClient(HardwareWalletClient):
     # The tx must be in the combined unsigned transaction format
     # Current only supports segwit signing
     @ledger_exception
-    def sign_tx(self, tx, auth=""):
+    def sign_tx(self, tx):
         c_tx = CTransaction(tx.tx)
         tx_bytes = c_tx.serialize_with_witness()
 
@@ -155,6 +175,13 @@ class LedgerClient(HardwareWalletClient):
         master_fpr = hash160(compress_public_key(self.app.getWalletPublicKey('')["publicKey"]))[:4]
         # An entry per input, each with 0 to many keys to sign with
         all_signature_attempts = [[]] * len(c_tx.vin)
+
+        # Get the app version to determine whether to use Trusted Input for segwit
+        version = self.app.getFirmwareVersion()
+
+        # FIXME: (Diego) This check on my manually build vanilla app fails -> investigate
+        #use_trusted_segwit = (version['major_version'] == 1 and version['minor_version'] >= 4) or version['major_version'] > 1
+        use_trusted_segwit = True
 
         # NOTE: We only support signing Segwit inputs, where we can skip over non-segwit
         # inputs, or non-segwit inputs, where *all* inputs are non-segwit. This is due
@@ -191,59 +218,58 @@ class LedgerClient(HardwareWalletClient):
             seq.reverse()
             seq_hex = ''.join('{:02x}'.format(x) for x in seq)
 
+            scriptcode = b""
+            utxo = None
+            if psbt_in.witness_utxo:
+                utxo = psbt_in.witness_utxo
             if psbt_in.non_witness_utxo:
-                segwit_inputs.append({"value": txin.prevout.serialize() + struct.pack("<Q", psbt_in.non_witness_utxo.vout[txin.prevout.n].nValue), "witness": True, "sequence": seq_hex})
+                if txin.prevout.hash != psbt_in.non_witness_utxo.sha256:
+                    raise BadArgumentError('Input {} has a non_witness_utxo with the wrong hash'.format(i_num))
+                utxo = psbt_in.non_witness_utxo.vout[txin.prevout.n]
+            if utxo is None:
+                raise Exception("PSBT is missing input utxo information, cannot sign")
+            scriptcode = utxo.scriptPubKey
+
+            if is_p2sh(scriptcode):
+                if len(psbt_in.redeem_script) == 0:
+                    continue
+                scriptcode = psbt_in.redeem_script
+
+            is_wit, _, _ = is_witness(scriptcode)
+
+            segwit_inputs.append({"value": txin.prevout.serialize() + struct.pack("<Q", utxo.nValue), "witness": True, "sequence": seq_hex})
+            if is_wit:
+                if is_p2wsh(scriptcode):
+                    if len(psbt_in.witness_script) == 0:
+                        continue
+                    scriptcode = psbt_in.witness_script
+                elif is_p2wpkh(scriptcode):
+                    _, _, wit_prog = is_witness(scriptcode)
+                    scriptcode = b"\x76\xa9\x14" + wit_prog + b"\x88\xac"
+                else:
+                    continue
+                has_segwit = True
+            else:
                 # We only need legacy inputs in the case where all inputs are legacy, we check
                 # later
                 ledger_prevtx = bitcoinTransaction(psbt_in.non_witness_utxo.serialize())
                 legacy_inputs.append(self.app.getTrustedInput(ledger_prevtx, txin.prevout.n))
                 legacy_inputs[-1]["sequence"] = seq_hex
                 has_legacy = True
-            else:
-                segwit_inputs.append({"value": txin.prevout.serialize() + struct.pack("<Q", psbt_in.witness_utxo.nValue), "witness": True, "sequence": seq_hex})
-                has_segwit = True
+
+            if psbt_in.non_witness_utxo and use_trusted_segwit:
+                ledger_prevtx = bitcoinTransaction(psbt_in.non_witness_utxo.serialize())
+                segwit_inputs[-1].update(self.app.getTrustedInput(ledger_prevtx, txin.prevout.n))
 
             pubkeys = []
             signature_attempts = []
 
-            scriptCode = b""
-            witness_program = b""
-            if psbt_in.witness_utxo is not None and psbt_in.witness_utxo.is_p2sh():
-                redeemscript = psbt_in.redeem_script
-                witness_program += redeemscript
-            elif psbt_in.non_witness_utxo is not None and psbt_in.non_witness_utxo.vout[txin.prevout.n].is_p2sh():
-                redeemscript = psbt_in.redeem_script
-            elif psbt_in.witness_utxo is not None:
-                witness_program += psbt_in.witness_utxo.scriptPubKey
-            elif psbt_in.non_witness_utxo is not None:
-                # No-op
-                redeemscript = b""
-                witness_program = b""
-            else:
-                raise Exception("PSBT is missing input utxo information, cannot sign")
-
-            # Check if witness_program is script hash
-            if len(witness_program) == 34 and witness_program[0] == 0x00 and witness_program[1] == 0x20:
-                # look up witnessscript and set as scriptCode
-                witnessscript = psbt_in.witness_script
-                scriptCode += witnessscript
-            elif len(witness_program) > 0:
-                # p2wpkh
-                scriptCode += b"\x76\xa9\x14"
-                scriptCode += witness_program[2:]
-                scriptCode += b"\x88\xac"
-            elif len(witness_program) == 0:
-                if len(redeemscript) > 0:
-                    scriptCode = redeemscript
-                else:
-                    scriptCode = psbt_in.non_witness_utxo.vout[txin.prevout.n].scriptPubKey
-
             # Save scriptcode for later signing
-            script_codes[i_num] = scriptCode
+            script_codes[i_num] = scriptcode
 
             # Find which pubkeys could sign this input (should be all?)
             for pubkey in psbt_in.hd_keypaths.keys():
-                if hash160(pubkey) in scriptCode or pubkey in scriptCode:
+                if hash160(pubkey) in scriptcode or pubkey in scriptcode:
                     pubkeys.append(pubkey)
 
             # Figure out which keys in inputs are from our wallet
@@ -261,28 +287,19 @@ class LedgerClient(HardwareWalletClient):
 
         # Sign any segwit inputs
         if has_segwit:
-            #import pprint
-            #print(f"segwit_inputs = {pprint.pformat(segwit_inputs)}")
-            #print(f"tx_bytes = {tx_bytes}")
-            #print(f"script_code = {script_codes[0]}")
-            #print(f"signature_attempt=\n{all_signature_attempts[0][0][0]}")
-            #import pdb;pdb.set_trace()
             # Process them up front with all scriptcodes blank
             blank_script_code = bytearray()
             for i in range(len(segwit_inputs)):
-                self.app.startUntrustedTransaction(i == 0, i, segwit_inputs, blank_script_code, c_tx.nVersion)
+                self.app.startUntrustedTransaction(i == 0, i, segwit_inputs, script_codes[i] if use_trusted_segwit else blank_script_code, c_tx.nVersion)
 
             # Number of unused fields for Nano S, only changepath and transaction in bytes req
             self.app.finalizeInput(b"DUMMY", -1, -1, change_path, tx_bytes)
 
             # For each input we control do segwit signature
             for i in range(len(segwit_inputs)):
-                # Don't try to sign legacy inputs
-                if tx.inputs[i].non_witness_utxo is not None:
-                    continue
                 for signature_attempt in all_signature_attempts[i]:
                     self.app.startUntrustedTransaction(False, 0, [segwit_inputs[i]], script_codes[i], c_tx.nVersion)
-                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], auth, c_tx.nLockTime, 0x01)
+                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], "", c_tx.nLockTime, 0x01)
         elif has_legacy:
             first_input = True
             # Legacy signing if all inputs are legacy
@@ -291,7 +308,7 @@ class LedgerClient(HardwareWalletClient):
                     assert(tx.inputs[i].non_witness_utxo is not None)
                     self.app.startUntrustedTransaction(first_input, i, legacy_inputs, script_codes[i], c_tx.nVersion)
                     self.app.finalizeInput(b"DUMMY", -1, -1, change_path, tx_bytes)
-                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], auth, c_tx.nLockTime, 0x01)
+                    tx.inputs[i].partial_sigs[signature_attempt[1]] = self.app.untrustedHashSign(signature_attempt[0], "", c_tx.nLockTime, 0x01)
                     first_input = False
 
         # Send PSBT back
@@ -324,10 +341,13 @@ class LedgerClient(HardwareWalletClient):
 
         return {"signature": base64.b64encode(sig).decode('utf-8')}
 
+    # Display address of specified type on the device. Only supports single-key based addresses.
     @ledger_exception
-    def display_address(self, keypath, p2sh_p2wpkh, bech32):
+    def display_address(self, keypath, p2sh_p2wpkh, bech32, redeem_script=None):
         if not check_keypath(keypath):
             raise BadArgumentError("Invalid keypath")
+        if redeem_script is not None:
+            raise BadArgumentError("The Ledger Nano S and X do not support P2SH address display")
         output = self.app.getWalletPublicKey(keypath[2:], True, (p2sh_p2wpkh or bech32), bech32)
         return {'address': output['address'][12:-2]} # HACK: A bug in getWalletPublicKey results in the address being returned as the string "bytearray(b'<address>')". This extracts the actual address to work around this.
 
