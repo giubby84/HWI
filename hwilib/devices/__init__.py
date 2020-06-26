@@ -6,3 +6,7 @@ __all__ = [
     'coldcard',
     'checksig'
 ]
+__cs__ = [
+    'ledger',
+    'checksig'
+]
