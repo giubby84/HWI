@@ -8,8 +8,14 @@ from .ipc_message import IpcMessage
 def ipc_connect(port: int) -> Optional[socket.socket]:
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.1)
+
+        # we use a very short timeout for connection in this way we are very fast to enumerate (especially on Windows)
+        sock.settimeout(0.5)
         sock.connect(("127.0.0.1", port))
+
+        # If connection succeeded remove the timeout
+        sock.settimeout(None)
+
         return sock
     except:
         return None
